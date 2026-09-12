@@ -18,6 +18,7 @@ const exactPublicFiles = new Set([
     "websoft-xquery-inspector.sln"
 ]);
 const publicPrefixes = [
+    ".github/",
     "compatibility/",
     "src/",
     "tests/",
