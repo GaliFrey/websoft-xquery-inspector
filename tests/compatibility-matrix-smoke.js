@@ -32,7 +32,7 @@ for (const structure of matrix.runtimeStructures) {
 
 assert(matrix.environments.length === 10, "The matrix must contain exactly 5 x 2 environments.");
 const environments = new Map();
-const verifiedReadmeRows = new Set(parseVerifiedReadmeRows(readme));
+const verifiedReadmeRows = new Map(parseVerifiedReadmeRows(readme));
 
 for (const environment of matrix.environments) {
     const key = environment.build + ":" + environment.provider;
@@ -51,9 +51,27 @@ for (const environment of matrix.environments) {
 
     const readmeKey = environment.websoftVersion + ":" + environment.provider;
     if (environment.status === "verified") {
+        assert(
+            environment.coverage === "full-protocol"
+                || environment.coverage === "partial-protocol",
+            "Verified environment has no protocol coverage: " + key + "."
+        );
         assert(verifiedReadmeRows.has(readmeKey), "Verified environment is missing in README: " + key + ".");
+        const readmeResult = verifiedReadmeRows.get(readmeKey);
+        if (environment.coverage === "full-protocol") {
+            assert(
+                readmeResult === "Полный протокол совместимости подтверждён",
+                "Full protocol is not advertised consistently in README: " + key + "."
+            );
+        } else {
+            assert(
+                readmeResult.includes("частичный протокол"),
+                "Partial protocol is not identified in README: " + key + "."
+            );
+        }
     } else {
         assert(environment.reason, "Untested environment has no reason: " + key + ".");
+        assert(!environment.coverage, "Untested environment has protocol coverage: " + key + ".");
         assert(!verifiedReadmeRows.has(readmeKey), "Untested environment is advertised in README: " + key + ".");
     }
 
@@ -78,9 +96,11 @@ function parseVerifiedReadmeRows(content) {
     const table = content.match(/## Проверенная совместимость\s+([\s\S]*?)(?:\n\n[^|])/);
     assert(table, "README compatibility table was not found.");
     for (const line of table[1].split(/\r?\n/)) {
-        const match = line.match(/^\| `([^`]+)` \| `[^`]+` \| (MSSQL|PostgreSQL) `[^`]+` \|/);
+        const match = line.match(
+            /^\| `([^`]+)` \| `[^`]+` \| (MSSQL|PostgreSQL) `[^`]+` \| (.+) \|$/
+        );
         if (match) {
-            rows.push(match[1] + ":" + match[2]);
+            rows.push([match[1] + ":" + match[2], match[3]]);
         }
     }
     return rows;

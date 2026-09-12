@@ -16,7 +16,8 @@
       "providerVersion": "1.22.6.8",
       "runtimeTarget": "net6.0",
       "runtimeStructure": "collection-dc-query-command",
-      "status": "verified"
+      "status": "verified",
+      "coverage": "full-protocol"
     },
     {
       "build": "434",
@@ -26,7 +27,8 @@
       "providerVersion": "1.22.6.8",
       "runtimeTarget": "net6.0",
       "runtimeStructure": "collection-dc-query-command",
-      "status": "verified"
+      "status": "verified",
+      "coverage": "full-protocol"
     },
     {
       "build": "906",
@@ -36,7 +38,8 @@
       "providerVersion": "1.24.4.18",
       "runtimeTarget": "net6.0",
       "runtimeStructure": "collection-dc-query-command",
-      "status": "verified"
+      "status": "verified",
+      "coverage": "full-protocol"
     },
     {
       "build": "906",
@@ -46,7 +49,8 @@
       "providerVersion": "1.24.4.18",
       "runtimeTarget": "net6.0",
       "runtimeStructure": "collection-dc-query-command",
-      "status": "verified"
+      "status": "verified",
+      "coverage": "full-protocol"
     },
     {
       "build": "1132",
@@ -56,7 +60,8 @@
       "providerVersion": "1.25.3.4",
       "runtimeTarget": "net6.0",
       "runtimeStructure": "collection-dc-query-command",
-      "status": "verified"
+      "status": "verified",
+      "coverage": "full-protocol"
     },
     {
       "build": "1132",
@@ -66,7 +71,8 @@
       "providerVersion": "1.25.3.4",
       "runtimeTarget": "net6.0",
       "runtimeStructure": "collection-dc-query-command",
-      "status": "verified"
+      "status": "verified",
+      "coverage": "full-protocol"
     },
     {
       "build": "1333",
@@ -76,7 +82,8 @@
       "providerVersion": "1.25.3.4",
       "runtimeTarget": "net6.0",
       "runtimeStructure": "collection-dc-query-command",
-      "status": "verified"
+      "status": "verified",
+      "coverage": "full-protocol"
     },
     {
       "build": "1333",
@@ -86,7 +93,8 @@
       "providerVersion": "1.25.3.4",
       "runtimeTarget": "net6.0",
       "runtimeStructure": "collection-dc-query-command",
-      "status": "verified"
+      "status": "verified",
+      "coverage": "full-protocol"
     },
     {
       "build": "1515",
