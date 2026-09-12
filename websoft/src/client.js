@@ -253,9 +253,6 @@
                 if (data.success) {
                     cards.push({ kind: "sql" });
                     cards.push({ kind: "parameters" });
-                    if (warningItems(data).length) {
-                        cards.push({ kind: "warnings" });
-                    }
                     cards.push({ kind: "effective-xquery", expanded: true });
                     if (data.countSql) {
                         cards.push({ kind: "count-sql", expanded: false });
@@ -298,7 +295,7 @@
                         dom
                     );
                     viewModel.cards.forEach(function (card) {
-                        stack.appendChild(renderResultCard(card, viewModel.data, dom, stack));
+                        stack.appendChild(renderResultCard(card, viewModel.data, dom));
                     });
                     dom.resultNode.appendChild(stack);
                 }
@@ -318,7 +315,7 @@
                 };
             }
 
-            function renderResultCard(card, data, dom, stack) {
+            function renderResultCard(card, data, dom) {
                 if (card.kind === "contract-error") {
                     return errorCard(
                         "Версия JSON-контракта не поддерживается",
@@ -338,15 +335,11 @@
                 }
                 if (card.kind === "sql") {
                     return codeCard(
-                        "SQL", formatSql(data.sql || ""), data.sql || "", "primary-sql", dom,
-                        "sql"
+                        "SQL", formatSql(data.sql || ""), data.sql || "", "primary-sql", dom
                     );
                 }
                 if (card.kind === "parameters") {
                     return parametersCard(data.parameters || [], dom);
-                }
-                if (card.kind === "warnings") {
-                    return warningsCard(warningItems(data), data, stack, dom);
                 }
                 if (card.kind === "effective-xquery") {
                     var xquery = effectiveXQuery(data);
@@ -366,8 +359,7 @@
                         data.countSql,
                         card.expanded,
                         undefined,
-                        dom,
-                        "countSql"
+                        dom
                     );
                 }
                 if (card.kind === "error") {
@@ -397,7 +389,7 @@
                 }
             }
 
-            function codeCard(title, displayValue, copyValue, extraClass, dom, source) {
+            function codeCard(title, displayValue, copyValue, extraClass, dom) {
                 var card = element(
                     dom.document,
                     "section",
@@ -409,16 +401,14 @@
                     "Копировать", function () { return copyValue; }, dom
                 ));
                 card.appendChild(header);
-                card.codeOutputNode = element(
+                card.appendChild(element(
                     dom.document, "pre", "code-output", displayValue || "—"
-                );
-                card.warningSource = source;
-                card.appendChild(card.codeOutputNode);
+                ));
                 return card;
             }
 
             function collapsibleCodeCard(
-                title, displayValue, copyValue, expanded, extraClass, dom, source
+                title, displayValue, copyValue, expanded, extraClass, dom
             ) {
                 var card = element(
                     dom.document,
@@ -429,11 +419,9 @@
                 card.appendChild(detailsHeader(
                     title, function () { return copyValue; }, dom
                 ));
-                card.codeOutputNode = element(
+                card.appendChild(element(
                     dom.document, "pre", "code-output", displayValue || "—"
-                );
-                card.warningSource = source;
-                card.appendChild(card.codeOutputNode);
+                ));
                 return card;
             }
 
@@ -511,95 +499,6 @@
                 return rows.map(function (row) {
                     return row.map(tsvCell).join("\t");
                 }).join("\n");
-            }
-
-            function warningItems(data) {
-                var warnings = [];
-                [data.sqlAssessment, data.countSqlAssessment].forEach(function (assessment) {
-                    if (assessment && Array.isArray(assessment.warnings)) {
-                        assessment.warnings.forEach(function (warning) {
-                            warnings.push(warning);
-                        });
-                    }
-                });
-                return warnings;
-            }
-
-            function warningsCard(warnings, data, stack, dom) {
-                var card = element(dom.document, "section", "warnings-card");
-                var header = element(dom.document, "div", "card-header");
-                header.appendChild(element(
-                    dom.document, "div", "card-title", "Предупреждения · " + warnings.length
-                ));
-                card.appendChild(header);
-                var list = element(dom.document, "div", "warning-list");
-                warnings.forEach(function (warning) {
-                    var button = element(dom.document, "button", "warning-item");
-                    var location = warningLocation(warning);
-                    button.type = "button";
-                    button.appendChild(element(
-                        dom.document,
-                        "span",
-                        "warning-meta",
-                        (warning.source === "countSql" ? "Count SQL" : "SQL") + location
-                    ));
-                    button.appendChild(element(
-                        dom.document, "span", "warning-message", valueText(warning.message)
-                    ));
-                    button.addEventListener("click", function () {
-                        focusWarning(warning, data, stack);
-                    });
-                    list.appendChild(button);
-                });
-                card.appendChild(list);
-                return card;
-            }
-
-            function warningLocation(warning) {
-                if (typeof warning.line !== "number" || typeof warning.column !== "number") {
-                    return "";
-                }
-                return " · " + warning.line + ":" + warning.column;
-            }
-
-            function focusWarning(warning, data, stack) {
-                var source = warning.source === "countSql" ? "countSql" : "sql";
-                var sourceText = source === "countSql" ? (data.countSql || "") : (data.sql || "");
-                var sourceCard = Array.prototype.filter.call(stack.children, function (child) {
-                    return child.warningSource === source;
-                })[0];
-                if (!sourceCard) {
-                    return;
-                }
-                if (String(sourceCard.tagName).toLowerCase() === "details") {
-                    sourceCard.open = true;
-                }
-                renderWarningHighlight(sourceCard.codeOutputNode, sourceText, warning);
-                if (typeof sourceCard.scrollIntoView === "function") {
-                    sourceCard.scrollIntoView({ block: "nearest" });
-                }
-            }
-
-            function renderWarningHighlight(output, source, warning) {
-                var start = warning.startOffset;
-                var length = warning.length;
-                output.textContent = "";
-                if (typeof start !== "number" || typeof length !== "number"
-                    || start < 0 || length <= 0 || start + length > source.length) {
-                    output.textContent = source || "—";
-                    return;
-                }
-                output.appendChild(element(output.ownerDocument, "span", "", source.slice(0, start)));
-                var mark = element(
-                    output.ownerDocument, "mark", "warning-highlight", source.slice(start, start + length)
-                );
-                output.appendChild(mark);
-                output.appendChild(element(
-                    output.ownerDocument, "span", "", source.slice(start + length)
-                ));
-                if (typeof mark.scrollIntoView === "function") {
-                    mark.scrollIntoView({ block: "center", inline: "center" });
-                }
             }
 
             function tsvCell(value) {
@@ -688,7 +587,6 @@
                         ["Подготовка XQuery", millisecondsText(data.timingsMs.preprocessing)],
                         ["Трансляция", millisecondsText(data.timingsMs.translation)],
                         ["Извлечение команды", millisecondsText(data.timingsMs.extraction)],
-                        ["Оценка SQL", millisecondsText(data.timingsMs.assessment)],
                         ["Освобождение коллекции", millisecondsText(data.timingsMs.cleanup)]
                     ]);
                 }
@@ -711,7 +609,7 @@
             function rawDetails(data, dom) {
                 var json = JSON.stringify(data, null, 2);
                 return collapsibleCodeCard(
-                    "Исходный JSON", json, json, false, undefined, dom, undefined
+                    "Исходный JSON", json, json, false, undefined, dom
                 );
             }
 

@@ -287,7 +287,6 @@ function result(overrides) {
             total: 1.25,
             translation: 0.5,
             extraction: 0.25,
-            assessment: 0.1,
             cleanup: 0.05
         },
         parameters: []

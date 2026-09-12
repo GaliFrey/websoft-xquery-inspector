@@ -154,17 +154,13 @@ const diagnosticData = {
     contractVersion: 1,
     inspectorVersion: "1.2.1",
     failureStage: null,
-    timingsMs: { total: 4, assessment: 1.25 }
+    timingsMs: { total: 4 }
 };
 const lines = diagnosticLines(diagnosticData);
 assert(lines[0] === "Версия контракта: 1", "Contract diagnostic is incorrect.");
 assert(
     lines.includes("Этап ошибки: —"),
     "Missing diagnostic value does not use the fallback."
-);
-assert(
-    lines.includes("Оценка SQL: 1.250 ms"),
-    "SQL assessment timing is missing or incorrectly formatted."
 );
 assert(millisecondsText(null) === "—", "Null timing does not use the fallback.");
 assert(millisecondsText(undefined) === "—", "Missing timing does not use the fallback.");
@@ -305,58 +301,6 @@ async function verifyRendererAndInstanceIsolation() {
         "Request state did not leave loading after completion."
     );
 
-    const warningRoot = harness.createRoot("warnings");
-    const warningRenderer = clientApi.createRenderer(clientApi.getDom(warningRoot.root));
-    const unsafeMessage = '<img src=x onerror="alert(1)">';
-    const warningData = {
-        contractVersion: 1,
-        success: true,
-        sql: "select @main",
-        countSql: "select @count",
-        parameters: [],
-        sqlAssessment: { warnings: [{
-            source: "sql",
-            message: unsafeMessage,
-            startOffset: 7,
-            length: 5,
-            line: 1,
-            column: 8
-        }] },
-        countSqlAssessment: { warnings: [{
-            source: "countSql",
-            message: "Count parameter is missing.",
-            startOffset: 7,
-            length: 6,
-            line: 1,
-            column: 8
-        }] }
-    };
-    warningRenderer.result(clientApi.resultViewModel(warningData), 1);
-    const warningStack = warningRoot.nodes.result.children[0];
-    const warningCard = warningStack.children[2];
-    const warningButtons = warningCard.children[1].children;
-    assert(warningButtons.length === 2, "Warning order or count is incorrect.");
-    assert(
-        warningButtons[0].textContent.includes("SQL · 1:8")
-            && warningButtons[0].textContent.includes(unsafeMessage)
-            && warningButtons[1].textContent.includes("Count SQL · 1:8"),
-        "Warning source, position, or safe text output is incorrect."
-    );
-    warningButtons[1].listeners.click();
-    const countCard = warningStack.children[4];
-    assert(countCard.open === true, "Count SQL card was not expanded from a warning.");
-    assert(
-        countCard.codeOutputNode.children[1].tagName === "mark"
-            && countCard.codeOutputNode.children[1].textContent === "@count",
-        "Count SQL warning fragment was not highlighted."
-    );
-    warningButtons[0].listeners.click();
-    const sqlCard = warningStack.children[0];
-    assert(
-        sqlCard.codeOutputNode.children[1].textContent === "@main"
-            && sqlCard.scrolled === true,
-        "Main SQL warning did not navigate to the source fragment."
-    );
 }
 
 async function verifyCopyBehavior() {
@@ -560,20 +504,19 @@ function verifyResultCards(getCards) {
     );
     assert(unsupported[1].expanded === false, "Unsupported raw JSON card must be collapsed.");
 
-    const warned = getCards({
+    const obsoleteAssessments = getCards({
         contractVersion: 1,
         success: true,
         sqlAssessment: { warnings: [{ source: "sql" }] },
         countSqlAssessment: { warnings: [{ source: "countSql" }] }
     });
-    assertCardKinds(warned, [
+    assertCardKinds(obsoleteAssessments, [
         "sql",
         "parameters",
-        "warnings",
         "effective-xquery",
         "diagnostics",
         "raw"
-    ], "Warning card order is incorrect.");
+    ], "Obsolete SQL assessments still affect the client.");
 }
 
 function assertCardKinds(cards, expectedKinds, message) {
@@ -619,7 +562,7 @@ function verifyTemplateFileProperties() {
     const rendererSource = sourceBetween(
         script,
         "function createRenderer(dom)",
-        "function renderResultCard(card, data, dom, stack)"
+        "function renderResultCard(card, data, dom)"
     );
     assert(
         !/\b(?:document|querySelector|textContent|appendChild)\b/.test(transportSource),

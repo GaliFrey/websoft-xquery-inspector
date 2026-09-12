@@ -30,14 +30,8 @@ RunScenario(
     () => VerifyParameterNormalizationLimits(inspector));
 RunScenario("serialization-fallback", VerifySerializationFallback);
 RunScenario(
-    "suspicious-sql-and-large-integer",
-    () => VerifySuspiciousSqlAndLargeInteger(inspector, provider));
-RunScenario(
-    "ignored-syntax-inside-literals",
-    () => VerifyIgnoredSyntaxInsideLiterals(inspector, provider));
-RunScenario(
-    "sql-parameter-consistency",
-    () => VerifySqlParameterConsistency(inspector));
+    "large-integer-precision",
+    () => VerifyLargeIntegerPrecision(inspector, provider));
 RunScenario("invalid-input", () => VerifyInvalidInput(inspector, provider));
 
 Console.WriteLine("Smoke tests passed for " + AppContext.TargetFrameworkName + ".");
@@ -106,13 +100,11 @@ static void VerifySuccessfulInspection(
     Assert(
         root.GetProperty("parameters")[0].GetProperty("value").GetInt64() == 1111111L,
         "Unexpected parameter value.");
+    Assert(!root.TryGetProperty("sqlAssessment", out _), "SQL assessment is still exposed.");
+    Assert(!root.TryGetProperty("countSqlAssessment", out _), "Count SQL assessment is still exposed.");
     Assert(
-        root.GetProperty("sqlAssessment").GetProperty("status").GetString()
-            == "no-obvious-issues",
-        "Valid SQL raised a structural warning.");
-    Assert(
-        !root.GetProperty("sqlAssessment").GetProperty("syntaxValidated").GetBoolean(),
-        "Structural assessment must not claim full syntax validation.");
+        !root.GetProperty("timingsMs").TryGetProperty("assessment", out _),
+        "SQL assessment timing is still exposed.");
     Assert(provider.LastCollection?.Terminated == true, "Collection was not terminated.");
     AssertAllSuccessfulTimings(root);
 }
@@ -284,14 +276,11 @@ static void VerifyFailureStages(Inspector inspector)
             "for $elem in collaborators return $elem/id"),
         "cleanup-collection");
 
-    // SqlAssessor is deterministic and has no external failure source. Its stage is
-    // covered by successful assessment output and a non-null assessment timing.
 }
 
-static void VerifySuspiciousSqlAndLargeInteger(Inspector inspector, FakeProvider provider)
+static void VerifyLargeIntegerPrecision(Inspector inspector, FakeProvider provider)
 {
-    provider.Sql =
-        "select t_elem.[id] from dbo.[collaborators] t_elem where t_elem.[id][in]@p0";
+    provider.Sql = "select t_elem.id from collaborators t_elem where t_elem.id=@p0";
     provider.ParameterValue = 6148914691236517121L;
 
     string json = inspector.Inspect(
@@ -301,15 +290,7 @@ static void VerifySuspiciousSqlAndLargeInteger(Inspector inspector, FakeProvider
             + "return $elem/id");
     JsonElement root = ParseResult(json);
 
-    Assert(
-        root.GetProperty("success").GetBoolean(),
-        "Suspicious SQL should still be extracted successfully.");
-    Assert(
-        root.GetProperty("sqlAssessment").GetProperty("status").GetString() == "warning",
-        "Suspicious SQL was not detected.");
-    Assert(
-        root.GetProperty("sqlAssessment").GetProperty("warnings").GetArrayLength() == 2,
-        "Unexpected structural warning count.");
+    Assert(root.GetProperty("success").GetBoolean(), "SQL extraction failed.");
     Assert(
         root.GetProperty("parameters")[0].GetProperty("value").ValueKind
             == JsonValueKind.String,
@@ -700,123 +681,6 @@ static void VerifyInvalidInput(Inspector inspector, FakeProvider provider)
         "Oversized XQuery reached the provider.");
 }
 
-static void VerifyIgnoredSyntaxInsideLiterals(Inspector inspector, FakeProvider provider)
-{
-    provider.Sql = "select '[id][in]@p0' as [text] /* ) ]@p1 */";
-    JsonElement root = ParseResult(inspector.Inspect(
-        provider,
-        "for $elem in collaborators return $elem/id"));
-
-    Assert(
-        root.GetProperty("sqlAssessment").GetProperty("status").GetString()
-            == "no-obvious-issues",
-        "SQL literals or comments caused a false structural warning.");
-}
-
-static void VerifySqlParameterConsistency(Inspector inspector)
-{
-    object[] parameters =
-    {
-        new FakeSqlParameter { ParameterName = "@Used", Value = "SAFE_VALUE" },
-        new FakeSqlParameter { ParameterName = "@unused", Value = "SECRET_VALUE" },
-        new FakeSqlParameter { ParameterName = "@DUP", Value = 1 },
-        new FakeSqlParameter { ParameterName = "@dup", Value = 2 }
-    };
-    string sql = "select N'😀'\r\nwhere id=@used and other=@Missing and again=@USED";
-    string countSql = "select count(*)\nfrom items where id=@CountMissing";
-    JsonElement root = InspectConsistencyCommand(inspector, sql, countSql, parameters);
-
-    JsonElement sqlAssessment = root.GetProperty("sqlAssessment");
-    AssertWarningCodes(
-        sqlAssessment,
-        "missing-command-parameter",
-        "unused-command-parameter",
-        "unused-command-parameter",
-        "duplicate-command-parameter");
-    JsonElement missing = sqlAssessment.GetProperty("warnings")[0];
-    Assert(missing.GetProperty("source").GetString() == "sql", "Main SQL source is incorrect.");
-    Assert(missing.GetProperty("severity").GetString() == "warning", "Warning severity is missing.");
-    Assert(missing.GetProperty("offset").GetInt32() == sql.IndexOf("@Missing", StringComparison.Ordinal),
-        "Legacy warning offset changed.");
-    Assert(missing.GetProperty("startOffset").GetInt32() == missing.GetProperty("offset").GetInt32(),
-        "Start offset differs from the legacy offset.");
-    Assert(missing.GetProperty("length").GetInt32() == "@Missing".Length,
-        "Parameter warning length is incorrect.");
-    Assert(missing.GetProperty("line").GetInt32() == 2 && missing.GetProperty("column").GetInt32() == 26,
-        "CRLF or Unicode coordinates are incorrect.");
-    Assert(missing.GetProperty("fragment").GetString()?.Contains("@Missing", StringComparison.Ordinal) == true,
-        "Legacy warning fragment is missing.");
-    Assert(
-        !sqlAssessment.GetProperty("warnings").GetRawText().Contains("SECRET_VALUE", StringComparison.Ordinal),
-        "A warning exposed a parameter value.");
-
-    JsonElement collectionWarning = sqlAssessment.GetProperty("warnings")[1];
-    foreach (string coordinate in new[] { "offset", "startOffset", "length", "line", "column" })
-    {
-        Assert(collectionWarning.GetProperty(coordinate).ValueKind == JsonValueKind.Null,
-            "Collection warning coordinate must be null: " + coordinate);
-    }
-
-    JsonElement countAssessment = root.GetProperty("countSqlAssessment");
-    AssertWarningCodes(countAssessment, "missing-command-parameter");
-    JsonElement countMissing = countAssessment.GetProperty("warnings")[0];
-    Assert(countMissing.GetProperty("source").GetString() == "countSql", "Count SQL source is incorrect.");
-    Assert(countMissing.GetProperty("line").GetInt32() == 2, "LF coordinate is incorrect.");
-
-    JsonElement ignored = InspectConsistencyCommand(
-        inspector,
-        "select '@fake', \"@quoted\", [@bracketed], @@ROWCOUNT -- @line\n/* @block */ where id=@Real",
-        null,
-        new object[] { new FakeSqlParameter { ParameterName = "@real", Value = 1 } });
-    AssertWarningCodes(ignored.GetProperty("sqlAssessment"));
-
-    JsonElement repeated = InspectConsistencyCommand(
-        inspector,
-        "select * from items where a=@p0 or b=@P0",
-        null,
-        new object[] { new FakeSqlParameter { ParameterName = "@p0", Value = 1 } });
-    AssertWarningCodes(repeated.GetProperty("sqlAssessment"));
-
-    JsonElement unknown = InspectConsistencyCommand(
-        inspector,
-        "select * from items where a=@missing",
-        null,
-        new object[] { new FakeDbParameter { ParameterName = "@unused", Value = 1 } });
-    AssertWarningCodes(unknown.GetProperty("sqlAssessment"));
-
-    JsonElement empty = InspectConsistencyCommand(
-        inspector,
-        " \r\n",
-        null,
-        Array.Empty<object>());
-    Assert(empty.GetProperty("success").GetBoolean(), "Empty generated SQL changed extraction success.");
-    AssertWarningCodes(empty.GetProperty("sqlAssessment"), "empty-sql");
-}
-
-static JsonElement InspectConsistencyCommand(
-    Inspector inspector,
-    string sql,
-    string? countSql,
-    IEnumerable parameters)
-{
-    ScenarioProvider provider = new(_ => new DirectCollection(
-        new QueryWithConsistencyCommand(sql, countSql, parameters)));
-    return ParseResult(inspector.Inspect(
-        provider,
-        "for $elem in collaborators return $elem/id"));
-}
-
-static void AssertWarningCodes(JsonElement assessment, params string[] expected)
-{
-    JsonElement warnings = assessment.GetProperty("warnings");
-    Assert(warnings.GetArrayLength() == expected.Length, "Unexpected SQL warning count.");
-    for (int index = 0; index < expected.Length; index++)
-    {
-        Assert(warnings[index].GetProperty("code").GetString() == expected[index],
-            "Unexpected SQL warning order at index " + index + ".");
-    }
-}
-
 static JsonElement ParseResult(string json)
 {
     using JsonDocument document = JsonDocument.Parse(json);
@@ -843,7 +707,7 @@ static void AssertVersion(JsonElement root, string propertyName)
 
 static void AssertAllSuccessfulTimings(JsonElement root)
 {
-    foreach (string name in new[] { "total", "preprocessing", "translation", "extraction", "assessment", "cleanup" })
+    foreach (string name in new[] { "total", "preprocessing", "translation", "extraction", "cleanup" })
     {
         AssertTiming(root, name, expected: true);
     }
@@ -1091,32 +955,6 @@ sealed class CommandWithParameters
     }
 
     public string CommandText => "select id from collaborators";
-
-    public IEnumerable Parameters { get; }
-}
-
-sealed class QueryWithConsistencyCommand
-{
-    public QueryWithConsistencyCommand(string sql, string? countSql, IEnumerable parameters)
-    {
-        CountQueryValue = countSql;
-        command = new ConsistencyCommand(sql, parameters);
-    }
-
-    public string? CountQueryValue { get; }
-
-    public ConsistencyCommand command { get; }
-}
-
-sealed class ConsistencyCommand
-{
-    public ConsistencyCommand(string sql, IEnumerable parameters)
-    {
-        CommandText = sql;
-        Parameters = parameters;
-    }
-
-    public string CommandText { get; }
 
     public IEnumerable Parameters { get; }
 }

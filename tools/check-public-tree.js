@@ -7,7 +7,7 @@ const { execFileSync } = require("child_process");
 const root = path.resolve(__dirname, "..");
 const tracked = git(["ls-files", "-z"])
     .split("\0")
-    .filter(Boolean);
+    .filter(file => file && fs.existsSync(path.join(root, file)));
 const failures = [];
 
 const exactPublicFiles = new Set([

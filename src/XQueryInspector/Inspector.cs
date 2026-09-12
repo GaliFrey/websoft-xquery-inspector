@@ -75,8 +75,8 @@ public sealed class Inspector
 
     /// <summary>
     /// Inspects XQuery through the active UniBridge provider and returns JSON
-    /// containing SQL, count SQL, parameters, structural assessments, types,
-    /// and an error if one occurs. The generated SQL command is not executed.
+    /// containing SQL, count SQL, parameters, types, and an error if one
+    /// occurs. The generated SQL command is not executed.
     /// </summary>
     public string Inspect(object? provider, string? xquery)
     {
@@ -247,34 +247,11 @@ public sealed class Inspector
 
                 failureStage = "read-parameters";
                 object? commandParameters = GetMemberValue(command, "Parameters");
-                result.Parameters = ReadParameters(commandParameters, out bool hasSqlDbType);
-                result.UsesMssqlParameters = IsMssqlCommand(command) || hasSqlDbType;
+                result.Parameters = ReadParameters(commandParameters);
             }
             finally
             {
                 result.TimingsMs.Extraction = GetElapsedMilliseconds(extractionStartedAt);
-            }
-
-            failureStage = "assess-sql";
-            long assessmentStartedAt = Stopwatch.GetTimestamp();
-            try
-            {
-                result.SqlAssessment = SqlAssessor.Assess(
-                    result.Sql,
-                    result.Parameters,
-                    "sql",
-                    result.UsesMssqlParameters,
-                    isMainSql: true);
-                result.CountSqlAssessment = SqlAssessor.Assess(
-                    result.CountSql,
-                    result.Parameters,
-                    "countSql",
-                    result.UsesMssqlParameters,
-                    isMainSql: false);
-            }
-            finally
-            {
-                result.TimingsMs.Assessment = GetElapsedMilliseconds(assessmentStartedAt);
             }
 
             result.Success = true;
@@ -469,11 +446,8 @@ public sealed class Inspector
         return null;
     }
 
-    private static List<ParameterResult> ReadParameters(
-        object? parametersValue,
-        out bool hasSqlDbType)
+    private static List<ParameterResult> ReadParameters(object? parametersValue)
     {
-        hasSqlDbType = false;
         List<ParameterResult> parameters = new();
         if (parametersValue is not IEnumerable enumerable)
         {
@@ -495,8 +469,6 @@ public sealed class Inspector
                 continue;
             }
 
-            hasSqlDbType = hasSqlDbType
-                || item.GetType().GetMember("SqlDbType", MemberFlags).Length != 0;
             object? value = GetMemberValue(item, "Value");
             parameters.Add(new ParameterResult
             {
@@ -522,26 +494,6 @@ public sealed class Inspector
 
         object? parameterValue = GetMemberValue(parameter, "Value");
         return parameterValue?.GetType().FullName;
-    }
-
-    private static bool IsMssqlCommand(object command)
-    {
-        Type commandType = command.GetType();
-        string assemblyName = commandType.Assembly.GetName().Name ?? string.Empty;
-        if (assemblyName.IndexOf("mssql", StringComparison.OrdinalIgnoreCase) >= 0
-            || string.Equals(
-                commandType.FullName,
-                "System.Data.SqlClient.SqlCommand",
-                StringComparison.Ordinal)
-            || string.Equals(
-                commandType.FullName,
-                "Microsoft.Data.SqlClient.SqlCommand",
-                StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        return false;
     }
 
     private static string? FormatParameterType(string memberName, object value)
@@ -866,12 +818,6 @@ internal sealed class InspectionResult
 
     public List<ParameterResult> Parameters { get; set; } = new();
 
-    internal bool UsesMssqlParameters { get; set; }
-
-    public SqlAssessmentResult SqlAssessment { get; set; } = new();
-
-    public SqlAssessmentResult CountSqlAssessment { get; set; } = new();
-
     public string? ReflectionPath { get; set; }
 
     public string? FailureStage { get; set; }
@@ -909,8 +855,6 @@ internal sealed class InspectionTimings
     public double? Translation { get; set; }
 
     public double? Extraction { get; set; }
-
-    public double? Assessment { get; set; }
 
     public double? Cleanup { get; set; }
 }

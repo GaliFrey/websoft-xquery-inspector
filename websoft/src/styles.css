@@ -10,7 +10,6 @@
             --muted: #687873;
             --accent: #16845f;
             --accent-strong: #0e6f51;
-            --warning: #946810;
             --danger: #b53c47;
             --danger-bg: #fff0f1;
             --success-bg: #e6f5ee;
@@ -338,7 +337,6 @@
         /* Cards, tables and details */
         .xqi-root .code-card,
         .xqi-root .data-card,
-        .xqi-root .warnings-card,
         .xqi-root details {
             overflow: hidden;
             border: 1px solid var(--line);
@@ -424,49 +422,6 @@
             padding: 13px;
             color: var(--muted);
             font-size: 12px;
-        }
-
-        .xqi-root .warning-list {
-            display: grid;
-        }
-
-        .xqi-root .warning-item {
-            display: grid;
-            grid-template-columns: 94px minmax(0, 1fr);
-            gap: 10px;
-            width: 100%;
-            padding: 9px 12px;
-            border: 0;
-            border-bottom: 1px solid var(--line);
-            background: transparent;
-            color: var(--text);
-            text-align: left;
-            cursor: pointer;
-        }
-
-        .xqi-root .warning-item:last-child {
-            border-bottom: 0;
-        }
-
-        .xqi-root .warning-item:hover,
-        .xqi-root .warning-item:focus-visible {
-            background: #fff8e6;
-        }
-
-        .xqi-root .warning-meta {
-            color: #8a6513;
-            font: 11px/1.45 Consolas, monospace;
-        }
-
-        .xqi-root .warning-message {
-            font-size: 12px;
-            line-height: 1.45;
-        }
-
-        .xqi-root .warning-highlight {
-            border-radius: 2px;
-            background: #ffe08a;
-            color: inherit;
         }
 
         .xqi-root summary {

@@ -570,10 +570,6 @@
         {
             return false;
         }
-        if (isMissing(result.timingsMs.assessment))
-        {
-            return false;
-        }
         return isMissing(result.timingsMs.cleanup) == false;
     }
 
