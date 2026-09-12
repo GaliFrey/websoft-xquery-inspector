@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "id": "basic-parameter",
+      "kind": "basic",
+      "expectedParameterValue": "6148914691236517121",
+      "xqueryFile": "scenarios/basic-parameter.xq"
+    },
+    {
+      "id": "hierarchy-child",
+      "kind": "hierarchy",
+      "xqueryFile": "scenarios/hierarchy-child.xq"
+    },
+    {
+      "id": "hierarchy-self",
+      "kind": "hierarchy",
+      "xqueryFile": "scenarios/hierarchy-self.xq"
+    },
+    {
+      "id": "invalid-query",
+      "kind": "invalid",
+      "expectedFailureStage": "preprocess-xquery",
+      "xqueryFile": "scenarios/invalid-query.xq"
+    },
+    {
+      "id": "oversized-xquery",
+      "kind": "oversized",
+      "generated": "max-xquery-plus-one"
+    }
+  ]
+}

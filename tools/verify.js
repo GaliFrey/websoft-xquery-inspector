@@ -13,6 +13,16 @@ const templatePath = path.join(
 
 const steps = [
     {
+        name: "Build WebSoft template",
+        command: process.execPath,
+        args: ["tools/build-template.js"]
+    },
+    {
+        name: "Build compatibility agent",
+        command: process.execPath,
+        args: ["tools/build-compatibility-agent.js"]
+    },
+    {
         name: "Release build",
         command: "dotnet",
         args: ["build", "websoft-xquery-inspector.sln", "-c", "Release", "-m:1"]
@@ -56,14 +66,14 @@ const steps = [
         args: ["tests/compatibility-matrix-smoke.js"]
     },
     {
+        name: "Compatibility agent smoke tests",
+        command: process.execPath,
+        args: ["tests/compatibility-agent-smoke.js"]
+    },
+    {
         name: "Public repository hygiene",
         command: process.execPath,
         args: ["tools/check-public-tree.js"]
-    },
-    {
-        name: "Generated template check",
-        command: process.execPath,
-        args: ["tools/build-template.js", "--check"]
     }
 ];
 

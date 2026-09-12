@@ -5,3 +5,4 @@
 *.md text eol=lf
 *.html text eol=crlf
 websoft/websoft-xquery-inspector.html linguist-generated=true
+websoft/xquery-inspector-compatibility-agent.js text eol=crlf linguist-generated=true
