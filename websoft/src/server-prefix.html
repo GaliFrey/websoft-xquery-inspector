@@ -1,0 +1,61 @@
+<%
+var requestForm = null;
+var inspectRequest = false;
+
+try
+{
+    requestForm = Request.Form;
+    inspectRequest = requestForm.action == "inspect";
+}
+catch (formError)
+{
+    inspectRequest = false;
+}
+
+if (inspectRequest)
+{
+    try
+    {
+        var maxXQueryLength = 200000;
+        var xquery = "" + requestForm.xquery;
+        if (xquery == "" || xquery == "undefined")
+        {
+            throw "XQuery is required.";
+        }
+
+        if (StrCharCount(xquery) > maxXQueryLength)
+        {
+            Request.SetRespStatus(413, "XQuery is too large");
+            Request.RespContentType = "text/plain; charset=utf-8";
+            Response.Write(
+                "XQuery exceeds the " + maxXQueryLength + " character limit."
+            );
+        }
+        else
+        {
+            var assembly = tools.dotnet_host.Object.GetAssembly(
+                "XQueryInspector.dll"
+            );
+            var inspector = assembly.CreateClassObject(
+                "XQueryInspector.Inspector"
+            );
+            var result = inspector.Inspect(
+                tools.spxml_unibridge.Object.provider,
+                xquery
+            );
+
+            Request.RespContentType = "application/json; charset=utf-8";
+            Response.Write(result);
+        }
+    }
+    catch (exception)
+    {
+        Request.SetRespStatus(500, "XQuery inspection failed");
+        Request.RespContentType = "text/plain; charset=utf-8";
+        Response.Write("" + exception);
+    }
+}
+else
+{
+    Request.RespContentType = "text/html; charset=utf-8";
+%>

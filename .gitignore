@@ -1,0 +1,24 @@
+bin/
+obj/
+.idea/
+.vscode/
+*.user
+*.suo
+0x6AA2F1C90796D839.zip
+
+# Внутренние материалы разработки и локальные reference-данные.
+/specs/
+/history.md
+/roadmap.md
+/AGENTS.md
+/.agents/
+/.codex/
+/references/
+/compatibility/results/
+
+# Локальные отчёты, журналы и выгрузки.
+/diagnostics/
+/reports/
+*.log
+*.prompt.md
+*.transcript.*

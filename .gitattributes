@@ -1,0 +1,7 @@
+* text=auto
+
+*.cs text eol=lf
+*.csproj text eol=lf
+*.md text eol=lf
+*.html text eol=crlf
+websoft/websoft-xquery-inspector.html linguist-generated=true

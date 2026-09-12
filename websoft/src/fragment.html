@@ -1,0 +1,47 @@
+<div class="xqi-root">
+    <div class="app-shell">
+        <main class="workspace">
+            <section class="panel" aria-labelledby="xqi-editor-title">
+                <div class="panel-header">
+                    <div>
+                        <h2 class="panel-title" id="xqi-editor-title">XQuery</h2>
+                        <div class="panel-kicker">Исходный запрос</div>
+                    </div>
+                    <div class="toolbar">
+                        <button class="button" id="xqi-format-button" type="button">Форматировать</button>
+                        <button class="button" id="xqi-sample-button" type="button">Пример</button>
+                        <button class="button" id="xqi-clear-button" type="button">Очистить</button>
+                    </div>
+                </div>
+
+                <div class="editor-wrap">
+                    <div class="line-numbers" id="xqi-line-numbers" aria-hidden="true">1</div>
+                    <textarea id="xqi-editor" spellcheck="false" aria-label="XQuery"></textarea>
+                </div>
+
+                <div class="editor-footer">
+                    <div class="shortcut"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> — инспектировать</div>
+                    <button class="button button-primary" id="xqi-inspect-button" type="button">
+                        <span id="xqi-inspect-button-label">Инспектировать</span>
+                    </button>
+                </div>
+            </section>
+
+            <section class="panel" aria-labelledby="xqi-result-title">
+                <div class="panel-header">
+                    <div>
+                        <h2 class="panel-title" id="xqi-result-title">Результат</h2>
+                        <div class="panel-kicker">SQL, параметры и преобразованный XQuery</div>
+                    </div>
+                    <div class="result-header-meta" id="xqi-result-status" aria-live="polite"></div>
+                </div>
+                <div class="result-body" id="xqi-result" aria-live="polite">
+                    <div class="empty-state">
+                        <div class="empty-icon" aria-hidden="true">→</div>
+                        <strong>Результат появится здесь</strong>
+                        <span>Введите XQuery и запустите инспекцию. Коллекция не будет перечислена.</span>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>

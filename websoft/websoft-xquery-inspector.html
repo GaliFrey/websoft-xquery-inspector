@@ -1,0 +1,1667 @@
+﻿<%
+var requestForm = null;
+var inspectRequest = false;
+
+try
+{
+    requestForm = Request.Form;
+    inspectRequest = requestForm.action == "inspect";
+}
+catch (formError)
+{
+    inspectRequest = false;
+}
+
+if (inspectRequest)
+{
+    try
+    {
+        var maxXQueryLength = 200000;
+        var xquery = "" + requestForm.xquery;
+        if (xquery == "" || xquery == "undefined")
+        {
+            throw "XQuery is required.";
+        }
+
+        if (StrCharCount(xquery) > maxXQueryLength)
+        {
+            Request.SetRespStatus(413, "XQuery is too large");
+            Request.RespContentType = "text/plain; charset=utf-8";
+            Response.Write(
+                "XQuery exceeds the " + maxXQueryLength + " character limit."
+            );
+        }
+        else
+        {
+            var assembly = tools.dotnet_host.Object.GetAssembly(
+                "XQueryInspector.dll"
+            );
+            var inspector = assembly.CreateClassObject(
+                "XQueryInspector.Inspector"
+            );
+            var result = inspector.Inspect(
+                tools.spxml_unibridge.Object.provider,
+                xquery
+            );
+
+            Request.RespContentType = "application/json; charset=utf-8";
+            Response.Write(result);
+        }
+    }
+    catch (exception)
+    {
+        Request.SetRespStatus(500, "XQuery inspection failed");
+        Request.RespContentType = "text/plain; charset=utf-8";
+        Response.Write("" + exception);
+    }
+}
+else
+{
+    Request.RespContentType = "text/html; charset=utf-8";
+%>
+<style>
+        /* Tokens and root */
+        .xqi-root {
+            color-scheme: light;
+            --panel: #ffffff;
+            --panel-raised: #f4f7f6;
+            --panel-soft: #eaf0ee;
+            --line: #d2dcda;
+            --line-strong: #b7c5c1;
+            --text: #202a27;
+            --muted: #687873;
+            --accent: #16845f;
+            --accent-strong: #0e6f51;
+            --warning: #946810;
+            --danger: #b53c47;
+            --danger-bg: #fff0f1;
+            --success-bg: #e6f5ee;
+            --code: #25312e;
+            --shadow: 0 4px 16px rgba(37, 49, 46, .08);
+            --radius: 10px;
+            min-width: 0;
+            margin: 0;
+            background: transparent;
+            color: var(--text);
+            font-family: Inter, "Segoe UI", Arial, sans-serif;
+        }
+
+        .xqi-root,
+        .xqi-root * {
+            box-sizing: border-box;
+        }
+
+        .xqi-root button,
+        .xqi-root textarea {
+            font: inherit;
+        }
+
+        .xqi-root button {
+            border: 0;
+        }
+
+        /* Layout */
+        .xqi-root .app-shell {
+            width: 100%;
+            margin: 0 auto;
+            padding: 4px 0 8px;
+        }
+
+        .xqi-root .workspace {
+            display: grid;
+            grid-template-columns: minmax(340px, .8fr) minmax(480px, 1.2fr);
+            gap: 8px;
+            align-items: stretch;
+        }
+
+        .xqi-root .panel {
+            min-width: 0;
+            overflow: hidden;
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: var(--panel);
+            box-shadow: var(--shadow);
+        }
+
+        .xqi-root .panel-header {
+            display: flex;
+            min-height: 56px;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .xqi-root .panel-title {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: .02em;
+        }
+
+        .xqi-root .panel-kicker {
+            margin-top: 4px;
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        /* Controls */
+        .xqi-root .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 7px;
+        }
+
+        .xqi-root .button {
+            min-height: 34px;
+            padding: 7px 11px;
+            border: 1px solid var(--line-strong);
+            border-radius: 9px;
+            background: transparent;
+            color: var(--text);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 650;
+            transition: border-color .15s ease, background .15s ease, transform .15s ease;
+        }
+
+        .xqi-root .button:hover {
+            border-color: var(--accent-strong);
+            background: rgba(22, 132, 95, .08);
+        }
+
+        .xqi-root .button:active {
+            transform: translateY(1px);
+        }
+
+        .xqi-root .button:focus-visible,
+        .xqi-root textarea:focus-visible,
+        .xqi-root summary:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+
+        .xqi-root .button-primary {
+            display: inline-flex;
+            min-height: 42px;
+            align-items: center;
+            justify-content: center;
+            gap: 9px;
+            padding: 10px 17px;
+            border-color: var(--accent-strong);
+            background: var(--accent);
+            color: #ffffff;
+            font-size: 13px;
+        }
+
+        .xqi-root .button-primary:hover {
+            background: var(--accent-strong);
+        }
+
+        .xqi-root .button:disabled {
+            cursor: wait;
+            opacity: .58;
+            transform: none;
+        }
+
+        .xqi-root .spinner {
+            width: 13px;
+            height: 13px;
+            border: 2px solid rgba(255, 255, 255, .35);
+            border-top-color: #ffffff;
+            border-radius: 50%;
+            animation: xqi-spin .7s linear infinite;
+        }
+
+        @keyframes xqi-spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Editor */
+        .xqi-root .editor-wrap {
+            display: grid;
+            min-height: 510px;
+            grid-template-columns: 46px minmax(0, 1fr);
+            background: #f9fbfa;
+        }
+
+        .xqi-root .line-numbers {
+            overflow: hidden;
+            padding: 19px 11px 19px 5px;
+            border-right: 1px solid var(--line);
+            color: #899792;
+            text-align: right;
+            white-space: pre;
+            user-select: none;
+            font: 13px/1.65 Consolas, "SFMono-Regular", "Courier New", monospace;
+        }
+
+        .xqi-root #xqi-editor {
+            width: 100%;
+            min-height: 510px;
+            resize: vertical;
+            padding: 19px;
+            border: 0;
+            outline: 0;
+            background: transparent;
+            color: var(--code);
+            caret-color: var(--accent);
+            tab-size: 4;
+            white-space: pre;
+            font: 13px/1.65 Consolas, "SFMono-Regular", "Courier New", monospace;
+        }
+
+        .xqi-root #xqi-editor::selection {
+            background: rgba(22, 132, 95, .2);
+        }
+
+        .xqi-root .editor-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 13px 16px;
+            border-top: 1px solid var(--line);
+            background: var(--panel-raised);
+        }
+
+        .xqi-root .shortcut {
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .xqi-root kbd {
+            padding: 2px 5px;
+            border: 1px solid var(--line-strong);
+            border-bottom-width: 2px;
+            border-radius: 5px;
+            background: var(--panel-soft);
+            color: var(--text);
+            font: 10px Consolas, monospace;
+        }
+
+        /* Result */
+        .xqi-root .result-body {
+            min-height: 582px;
+            padding: 12px;
+        }
+
+        .xqi-root .empty-state {
+            display: grid;
+            min-height: 510px;
+            place-content: center;
+            padding: 30px;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        .xqi-root .empty-icon {
+            display: grid;
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 17px;
+            place-items: center;
+            border: 1px dashed var(--line-strong);
+            border-radius: 18px;
+            color: var(--accent);
+            font: 700 26px Consolas, monospace;
+        }
+
+        .xqi-root .empty-state strong {
+            margin-bottom: 7px;
+            color: var(--text);
+            font-size: 15px;
+        }
+
+        .xqi-root .empty-state span {
+            max-width: 360px;
+            font-size: 12px;
+            line-height: 1.55;
+        }
+
+        .xqi-root .result-stack {
+            display: grid;
+            gap: 13px;
+        }
+
+        .xqi-root .result-header-meta {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 9px;
+            min-width: 0;
+        }
+
+        .xqi-root .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .xqi-root .status::before {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+            content: "";
+        }
+
+        .xqi-root .status-success {
+            background: var(--success-bg);
+            color: var(--accent);
+        }
+
+        .xqi-root .status-error {
+            background: var(--danger-bg);
+            color: var(--danger);
+        }
+
+        .xqi-root .duration {
+            color: var(--muted);
+            font: 11px Consolas, monospace;
+        }
+
+        .xqi-root .message {
+            padding: 11px 13px;
+            border: 1px solid rgba(148, 104, 16, .3);
+            border-radius: 10px;
+            background: #fff9e9;
+            color: #735619;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+
+        .xqi-root .error-box {
+            padding: 14px;
+            border: 1px solid rgba(181, 60, 71, .35);
+            border-radius: 12px;
+            background: var(--danger-bg);
+            color: #772831;
+        }
+
+        .xqi-root .error-type {
+            margin-bottom: 7px;
+            color: var(--danger);
+            font: 700 12px Consolas, monospace;
+        }
+
+        .xqi-root .error-text {
+            margin: 0;
+            white-space: pre-wrap;
+            font: 12px/1.55 Consolas, monospace;
+        }
+
+        /* Cards, tables and details */
+        .xqi-root .code-card,
+        .xqi-root .data-card,
+        .xqi-root .warnings-card,
+        .xqi-root details {
+            overflow: hidden;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: #fbfcfc;
+        }
+
+        .xqi-root .card-header {
+            display: flex;
+            min-height: 42px;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 8px 11px 8px 13px;
+            border-bottom: 1px solid var(--line);
+            background: var(--panel-raised);
+        }
+
+        .xqi-root .card-title {
+            color: #53635e;
+            font-size: 11px;
+            font-weight: 750;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+        }
+
+        .xqi-root .copy-button {
+            min-height: 27px;
+            padding: 4px 8px;
+            font-size: 10px;
+        }
+
+        .xqi-root .code-output {
+            max-height: min(34vh, 280px);
+            overflow: auto;
+            margin: 0;
+            padding: 15px;
+            color: var(--code);
+            white-space: pre;
+            font: 12px/1.6 Consolas, "SFMono-Regular", "Courier New", monospace;
+        }
+
+        .xqi-root .primary-sql .code-output {
+            min-height: 180px;
+            max-height: min(42vh, 380px);
+        }
+
+        .xqi-root .effective-xquery .code-output {
+            max-height: min(28vh, 220px);
+        }
+
+        .xqi-root .parameters {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .xqi-root .parameters th,
+        .xqi-root .parameters td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--line);
+            text-align: left;
+            vertical-align: top;
+        }
+
+        .xqi-root .parameters th {
+            color: var(--muted);
+            font-size: 10px;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+        }
+
+        .xqi-root .parameters tr:last-child td {
+            border-bottom: 0;
+        }
+
+        .xqi-root .parameters code {
+            color: var(--accent);
+            font-family: Consolas, monospace;
+        }
+
+        .xqi-root .empty-table {
+            padding: 13px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .xqi-root .warning-list {
+            display: grid;
+        }
+
+        .xqi-root .warning-item {
+            display: grid;
+            grid-template-columns: 94px minmax(0, 1fr);
+            gap: 10px;
+            width: 100%;
+            padding: 9px 12px;
+            border: 0;
+            border-bottom: 1px solid var(--line);
+            background: transparent;
+            color: var(--text);
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .xqi-root .warning-item:last-child {
+            border-bottom: 0;
+        }
+
+        .xqi-root .warning-item:hover,
+        .xqi-root .warning-item:focus-visible {
+            background: #fff8e6;
+        }
+
+        .xqi-root .warning-meta {
+            color: #8a6513;
+            font: 11px/1.45 Consolas, monospace;
+        }
+
+        .xqi-root .warning-message {
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .xqi-root .warning-highlight {
+            border-radius: 2px;
+            background: #ffe08a;
+            color: inherit;
+        }
+
+        .xqi-root summary {
+            padding: 12px 13px;
+            color: #53635e;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 700;
+            list-style-position: inside;
+        }
+
+        .xqi-root .details-header {
+            display: flex;
+            min-height: 42px;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 11px 7px 13px;
+            background: var(--panel-raised);
+            list-style: none;
+        }
+
+        .xqi-root .details-header::-webkit-details-marker {
+            display: none;
+        }
+
+        .xqi-root .details-header::before {
+            color: var(--muted);
+            content: "›";
+            font-size: 17px;
+            line-height: 1;
+            transition: transform .15s ease;
+        }
+
+        .xqi-root details[open] > .details-header::before {
+            transform: rotate(90deg);
+        }
+
+        .xqi-root .details-header .card-title {
+            margin-right: auto;
+        }
+
+        .xqi-root .meta-grid {
+            display: grid;
+            gap: 9px;
+            padding: 0 13px 13px;
+        }
+
+        .xqi-root .meta-row {
+            display: grid;
+            grid-template-columns: 145px minmax(0, 1fr);
+            gap: 10px;
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .xqi-root .meta-row code {
+            min-width: 0;
+            color: var(--text);
+            overflow-wrap: anywhere;
+            font-family: Consolas, monospace;
+        }
+
+        /* Responsive */
+        @media (max-width: 980px) {
+            .xqi-root .workspace {
+                grid-template-columns: 1fr;
+            }
+
+            .xqi-root .editor-wrap,
+            .xqi-root #xqi-editor {
+                min-height: 390px;
+            }
+
+            .xqi-root .result-body {
+                min-height: 300px;
+            }
+        }
+
+        @media (max-width: 650px) {
+            .xqi-root .app-shell {
+                padding: 2px 0 6px;
+            }
+
+            .xqi-root .panel-header,
+            .xqi-root .editor-footer {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .xqi-root .result-header-meta {
+                justify-content: flex-start;
+            }
+
+            .xqi-root .toolbar {
+                justify-content: flex-start;
+            }
+
+            .xqi-root .button-primary {
+                width: 100%;
+            }
+
+            .xqi-root .meta-row {
+                grid-template-columns: 1fr;
+                gap: 3px;
+            }
+        }
+
+        /* Reduced motion */
+        @media (prefers-reduced-motion: reduce) {
+            .xqi-root *,
+            .xqi-root *::before,
+            .xqi-root *::after {
+                scroll-behavior: auto !important;
+                animation-duration: .01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: .01ms !important;
+            }
+        }
+    </style>
+<div class="xqi-root">
+    <div class="app-shell">
+        <main class="workspace">
+            <section class="panel" aria-labelledby="xqi-editor-title">
+                <div class="panel-header">
+                    <div>
+                        <h2 class="panel-title" id="xqi-editor-title">XQuery</h2>
+                        <div class="panel-kicker">Исходный запрос</div>
+                    </div>
+                    <div class="toolbar">
+                        <button class="button" id="xqi-format-button" type="button">Форматировать</button>
+                        <button class="button" id="xqi-sample-button" type="button">Пример</button>
+                        <button class="button" id="xqi-clear-button" type="button">Очистить</button>
+                    </div>
+                </div>
+
+                <div class="editor-wrap">
+                    <div class="line-numbers" id="xqi-line-numbers" aria-hidden="true">1</div>
+                    <textarea id="xqi-editor" spellcheck="false" aria-label="XQuery"></textarea>
+                </div>
+
+                <div class="editor-footer">
+                    <div class="shortcut"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> — инспектировать</div>
+                    <button class="button button-primary" id="xqi-inspect-button" type="button">
+                        <span id="xqi-inspect-button-label">Инспектировать</span>
+                    </button>
+                </div>
+            </section>
+
+            <section class="panel" aria-labelledby="xqi-result-title">
+                <div class="panel-header">
+                    <div>
+                        <h2 class="panel-title" id="xqi-result-title">Результат</h2>
+                        <div class="panel-kicker">SQL, параметры и преобразованный XQuery</div>
+                    </div>
+                    <div class="result-header-meta" id="xqi-result-status" aria-live="polite"></div>
+                </div>
+                <div class="result-body" id="xqi-result" aria-live="polite">
+                    <div class="empty-state">
+                        <div class="empty-icon" aria-hidden="true">→</div>
+                        <strong>Результат появится здесь</strong>
+                        <span>Введите XQuery и запустите инспекцию. Коллекция не будет перечислена.</span>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        (function () {
+            "use strict";
+
+            // Configuration and initialization
+            var config = {
+                sample: [
+                    "for $elem in collaborators",
+                    "where $elem/id = 6148914691236517121",
+                    "return $elem/Fields('id', 'fullname')"
+                ].join("\n"),
+                supportedContractVersion: 1,
+                maxXQueryLength: 200000,
+                inspectEndpoint:
+                    "/custom_web_template.html" +
+                    "?object_code=websoft-xquery-inspector" +
+                    "&content_type=application%2Fjson%3B%20charset%3Dutf-8"
+            };
+
+            initialize(document.currentScript.parentNode, fetch, function () {
+                return performance.now();
+            });
+
+            function initialize(root, fetchImplementation, now) {
+                var dom = getDom(root);
+                var state = { status: "idle" };
+                var transport = createTransport(fetchImplementation, config.inspectEndpoint);
+                var render = createRenderer(dom);
+
+                function inspect() {
+                    var xquery;
+                    var validationMessage;
+                    var startedAt;
+
+                    if (state.status === "loading") {
+                        return Promise.resolve();
+                    }
+
+                    xquery = dom.editor.value.trim();
+                    validationMessage = xQueryValidationMessage(xquery);
+                    if (validationMessage) {
+                        state.status = "error";
+                        render.transportError(validationMessage);
+                        dom.editor.focus();
+                        return Promise.resolve();
+                    }
+
+                    state.status = "loading";
+                    render.loading(true);
+                    startedAt = now();
+
+                    return transport.inspect(xquery).then(function (data) {
+                        var viewModel = resultViewModel(data);
+                        state.status = viewModel.state;
+                        render.result(viewModel, now() - startedAt);
+                    }, function (error) {
+                        state.status = "error";
+                        render.transportError(
+                            error && error.message ? error.message : String(error)
+                        );
+                    }).then(function () {
+                        render.loading(false);
+                    }, function (error) {
+                        state.status = "error";
+                        render.loading(false);
+                        render.transportError(
+                            error && error.message ? error.message : String(error)
+                        );
+                    });
+                }
+
+                bindEditor(dom, inspect);
+                dom.editor.value = config.sample;
+                updateLineNumbers(dom);
+
+                return { inspect: inspect, state: state };
+            }
+
+            function getDom(root) {
+                return {
+                    document: root.ownerDocument,
+                    editor: root.querySelector("#xqi-editor"),
+                    lineNumbers: root.querySelector("#xqi-line-numbers"),
+                    inspectButton: root.querySelector("#xqi-inspect-button"),
+                    inspectButtonLabel: root.querySelector("#xqi-inspect-button-label"),
+                    resultNode: root.querySelector("#xqi-result"),
+                    resultStatusNode: root.querySelector("#xqi-result-status"),
+                    formatButton: root.querySelector("#xqi-format-button"),
+                    sampleButton: root.querySelector("#xqi-sample-button"),
+                    clearButton: root.querySelector("#xqi-clear-button")
+                };
+            }
+
+            // Request state and editor
+            function bindEditor(dom, inspect) {
+                dom.editor.addEventListener("input", function () {
+                    updateLineNumbers(dom);
+                });
+                dom.editor.addEventListener("scroll", function () {
+                    dom.lineNumbers.scrollTop = dom.editor.scrollTop;
+                });
+                dom.editor.addEventListener("keydown", function (event) {
+                    handleEditorKeydown(event, dom, inspect);
+                });
+                dom.inspectButton.addEventListener("click", inspect);
+                dom.formatButton.addEventListener("click", function () {
+                    dom.editor.value = formatXQuery(dom.editor.value);
+                    updateLineNumbers(dom);
+                    dom.editor.focus();
+                });
+                dom.sampleButton.addEventListener("click", function () {
+                    dom.editor.value = config.sample;
+                    updateLineNumbers(dom);
+                    dom.editor.focus();
+                });
+                dom.clearButton.addEventListener("click", function () {
+                    dom.editor.value = "";
+                    updateLineNumbers(dom);
+                    dom.editor.focus();
+                });
+            }
+
+            function handleEditorKeydown(event, dom, inspect) {
+                if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                    event.preventDefault();
+                    inspect();
+                    return;
+                }
+
+                if (event.key === "Tab") {
+                    event.preventDefault();
+                    var start = dom.editor.selectionStart;
+                    var end = dom.editor.selectionEnd;
+                    dom.editor.value = dom.editor.value.slice(0, start)
+                        + "    " + dom.editor.value.slice(end);
+                    dom.editor.selectionStart = dom.editor.selectionEnd = start + 4;
+                    updateLineNumbers(dom);
+                }
+            }
+
+            function updateLineNumbers(dom) {
+                var count = dom.editor.value.split("\n").length;
+                var numbers = [];
+                var index;
+                for (index = 1; index <= count; index += 1) {
+                    numbers.push(index);
+                }
+                dom.lineNumbers.textContent = numbers.join("\n");
+            }
+
+            function xQueryCharacterCount(source) {
+                return Array.from(source).length;
+            }
+
+            function xQueryValidationMessage(xquery) {
+                if (!xquery) {
+                    return "Введите XQuery для инспекции.";
+                }
+                if (xQueryCharacterCount(xquery) > config.maxXQueryLength) {
+                    return "XQuery превышает ограничение "
+                        + config.maxXQueryLength + " символов.";
+                }
+                return "";
+            }
+
+            // Transport
+            function createTransport(fetchImplementation, endpoint) {
+                function inspect(xquery) {
+                    return fetchImplementation(endpoint, {
+                        method: "POST",
+                        credentials: "same-origin",
+                        headers: {
+                            "Accept": "application/json",
+                            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                            "X-Requested-With": "XMLHttpRequest"
+                        },
+                        body: "action=inspect&xquery=" + encodeURIComponent(xquery)
+                    }).then(function (response) {
+                        return response.text().then(function (responseText) {
+                            if (!response.ok) {
+                                throw new Error(responseText || ("HTTP " + response.status));
+                            }
+                            if (/^\s*(?:<!doctype|<html)/i.test(responseText)) {
+                                throw new Error(
+                                    "Сервер вернул HTML вместо JSON. Проверьте код " +
+                                    "настраиваемого шаблона и его прямой endpoint."
+                                );
+                            }
+                            try {
+                                return JSON.parse(responseText);
+                            } catch (parseError) {
+                                throw new Error("Сервер вернул не JSON: " + responseText);
+                            }
+                        });
+                    });
+                }
+
+                return { inspect: inspect };
+            }
+
+            // Contract adaptation
+            function resultViewModel(data) {
+                var contractState = getContractState(data);
+                if (contractState === "unsupported") {
+                    return {
+                        state: "error",
+                        statusText: "Несовместимый контракт",
+                        statusClass: "status-error",
+                        data: data,
+                        cards: resultCards(data)
+                    };
+                }
+
+                return {
+                    state: data.success ? "result" : "error",
+                    statusText: data.success ? "SQL сформирован" : "Ошибка инспекции",
+                    statusClass: data.success ? "status-success" : "status-error",
+                    data: data,
+                    cards: resultCards(data)
+                };
+            }
+
+            function getContractState(data) {
+                if (!data || typeof data !== "object") {
+                    return "unsupported";
+                }
+                if (!Object.prototype.hasOwnProperty.call(data, "contractVersion")) {
+                    return "legacy";
+                }
+                return data.contractVersion === config.supportedContractVersion
+                    ? "supported"
+                    : "unsupported";
+            }
+
+            function effectiveXQuery(data) {
+                if (data.effectiveXQuery === null || data.effectiveXQuery === undefined) {
+                    return data.xQuery || "";
+                }
+                return data.effectiveXQuery;
+            }
+
+            function resultCards(data) {
+                var cards = [];
+                var contractState = getContractState(data);
+                if (contractState === "unsupported") {
+                    return [
+                        { kind: "contract-error" },
+                        { kind: "raw", expanded: false }
+                    ];
+                }
+                if (contractState === "legacy") {
+                    cards.push({ kind: "legacy-warning" });
+                }
+                if (data.success) {
+                    cards.push({ kind: "sql" });
+                    cards.push({ kind: "parameters" });
+                    if (warningItems(data).length) {
+                        cards.push({ kind: "warnings" });
+                    }
+                    cards.push({ kind: "effective-xquery", expanded: true });
+                    if (data.countSql) {
+                        cards.push({ kind: "count-sql", expanded: false });
+                    }
+                } else {
+                    cards.push({ kind: "error" });
+                }
+                if (data.cleanupError) {
+                    cards.push({ kind: "cleanup-error" });
+                }
+                cards.push({ kind: "diagnostics", expanded: false });
+                cards.push({ kind: "raw", expanded: false });
+                return cards;
+            }
+
+            // Result rendering
+            function createRenderer(dom) {
+                function setLoading(loading) {
+                    var oldSpinner = dom.inspectButton.querySelector(".spinner");
+                    dom.inspectButton.disabled = loading;
+                    dom.inspectButtonLabel.textContent = loading
+                        ? "Инспекция…" : "Инспектировать";
+
+                    if (loading && !oldSpinner) {
+                        var spinner = element(dom.document, "span", "spinner");
+                        spinner.setAttribute("aria-hidden", "true");
+                        dom.inspectButton.insertBefore(spinner, dom.inspectButtonLabel);
+                    } else if (!loading && oldSpinner) {
+                        oldSpinner.remove();
+                    }
+                }
+
+                function renderResult(viewModel, elapsed) {
+                    dom.resultNode.textContent = "";
+                    var stack = element(dom.document, "div", "result-stack");
+                    setResultStatus(
+                        viewModel.statusText,
+                        viewModel.statusClass,
+                        elapsed,
+                        dom
+                    );
+                    viewModel.cards.forEach(function (card) {
+                        stack.appendChild(renderResultCard(card, viewModel.data, dom, stack));
+                    });
+                    dom.resultNode.appendChild(stack);
+                }
+
+                function renderTransportError(message) {
+                    dom.resultNode.textContent = "";
+                    var stack = element(dom.document, "div", "result-stack");
+                    setResultStatus("Ошибка запроса", "status-error", undefined, dom);
+                    stack.appendChild(errorCard("Не удалось получить результат", message, dom));
+                    dom.resultNode.appendChild(stack);
+                }
+
+                return {
+                    loading: setLoading,
+                    result: renderResult,
+                    transportError: renderTransportError
+                };
+            }
+
+            function renderResultCard(card, data, dom, stack) {
+                if (card.kind === "contract-error") {
+                    return errorCard(
+                        "Версия JSON-контракта не поддерживается",
+                        "Шаблон поддерживает контракт " + config.supportedContractVersion
+                            + ", получено: " + valueText(data && data.contractVersion)
+                            + ". Ответ доступен ниже без интерпретации.",
+                        dom
+                    );
+                }
+                if (card.kind === "legacy-warning") {
+                    return element(
+                        dom.document,
+                        "div",
+                        "message",
+                        "Ответ DLL не содержит contractVersion. Данные показаны в режиме совместимости; обновите DLL для полной диагностики."
+                    );
+                }
+                if (card.kind === "sql") {
+                    return codeCard(
+                        "SQL", formatSql(data.sql || ""), data.sql || "", "primary-sql", dom,
+                        "sql"
+                    );
+                }
+                if (card.kind === "parameters") {
+                    return parametersCard(data.parameters || [], dom);
+                }
+                if (card.kind === "warnings") {
+                    return warningsCard(warningItems(data), data, stack, dom);
+                }
+                if (card.kind === "effective-xquery") {
+                    var xquery = effectiveXQuery(data);
+                    return collapsibleCodeCard(
+                        "Эффективный XQuery",
+                        xquery,
+                        xquery,
+                        card.expanded,
+                        "effective-xquery",
+                        dom
+                    );
+                }
+                if (card.kind === "count-sql") {
+                    return collapsibleCodeCard(
+                        "Count SQL",
+                        formatSql(data.countSql),
+                        data.countSql,
+                        card.expanded,
+                        undefined,
+                        dom,
+                        "countSql"
+                    );
+                }
+                if (card.kind === "error") {
+                    return errorCard(data.errorType, data.error, dom);
+                }
+                if (card.kind === "cleanup-error") {
+                    return errorCard("Ошибка освобождения коллекции", data.cleanupError, dom);
+                }
+                if (card.kind === "diagnostics") {
+                    return diagnosticsDetails(data, dom);
+                }
+                return rawDetails(data, dom);
+            }
+
+            function setResultStatus(text, className, elapsed, dom) {
+                dom.resultStatusNode.textContent = "";
+                dom.resultStatusNode.appendChild(element(
+                    dom.document, "div", "status " + className, text
+                ));
+                if (typeof elapsed === "number") {
+                    dom.resultStatusNode.appendChild(element(
+                        dom.document,
+                        "div",
+                        "duration",
+                        Math.round(elapsed) + " ms · браузер"
+                    ));
+                }
+            }
+
+            function codeCard(title, displayValue, copyValue, extraClass, dom, source) {
+                var card = element(
+                    dom.document,
+                    "section",
+                    "code-card" + (extraClass ? " " + extraClass : "")
+                );
+                var header = element(dom.document, "div", "card-header");
+                header.appendChild(element(dom.document, "div", "card-title", title));
+                header.appendChild(copyButton(
+                    "Копировать", function () { return copyValue; }, dom
+                ));
+                card.appendChild(header);
+                card.codeOutputNode = element(
+                    dom.document, "pre", "code-output", displayValue || "—"
+                );
+                card.warningSource = source;
+                card.appendChild(card.codeOutputNode);
+                return card;
+            }
+
+            function collapsibleCodeCard(
+                title, displayValue, copyValue, expanded, extraClass, dom, source
+            ) {
+                var card = element(
+                    dom.document,
+                    "details",
+                    "code-card" + (extraClass ? " " + extraClass : "")
+                );
+                card.open = expanded === true;
+                card.appendChild(detailsHeader(
+                    title, function () { return copyValue; }, dom
+                ));
+                card.codeOutputNode = element(
+                    dom.document, "pre", "code-output", displayValue || "—"
+                );
+                card.warningSource = source;
+                card.appendChild(card.codeOutputNode);
+                return card;
+            }
+
+            function detailsHeader(title, getText, dom) {
+                var header = element(dom.document, "summary", "details-header");
+                var button = copyButton("Копировать", getText, dom);
+                button.addEventListener("click", function (event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                });
+                header.appendChild(element(dom.document, "span", "card-title", title));
+                header.appendChild(button);
+                return header;
+            }
+
+            function parametersCard(parameters, dom) {
+                var card = element(dom.document, "section", "data-card");
+                var header = element(dom.document, "div", "card-header");
+                header.appendChild(element(
+                    dom.document, "div", "card-title", "Параметры · " + parameters.length
+                ));
+                header.appendChild(copyButton(
+                    "Копировать таблицу",
+                    function () { return parametersTsv(parameters); },
+                    dom
+                ));
+                card.appendChild(header);
+
+                if (!parameters.length) {
+                    card.appendChild(element(
+                        dom.document, "div", "empty-table", "Параметры отсутствуют."
+                    ));
+                    return card;
+                }
+
+                var table = element(dom.document, "table", "parameters");
+                var thead = dom.document.createElement("thead");
+                var headRow = dom.document.createElement("tr");
+                ["Имя", "Тип", "Значение"].forEach(function (label) {
+                    headRow.appendChild(element(dom.document, "th", "", label));
+                });
+                thead.appendChild(headRow);
+                table.appendChild(thead);
+
+                var tbody = dom.document.createElement("tbody");
+                parameters.forEach(function (parameter) {
+                    var row = dom.document.createElement("tr");
+                    var nameCell = dom.document.createElement("td");
+                    nameCell.appendChild(element(
+                        dom.document, "code", "", valueText(parameter.name)
+                    ));
+                    row.appendChild(nameCell);
+                    row.appendChild(element(
+                        dom.document, "td", "", valueText(parameter.type)
+                    ));
+                    row.appendChild(element(
+                        dom.document, "td", "", valueText(parameter.value)
+                    ));
+                    tbody.appendChild(row);
+                });
+                table.appendChild(tbody);
+                card.appendChild(table);
+                return card;
+            }
+
+            function parametersTsv(parameters) {
+                var rows = [["Имя", "Тип", "Значение"]];
+                parameters.forEach(function (parameter) {
+                    rows.push([
+                        parameter ? parameter.name : null,
+                        parameter ? parameter.type : null,
+                        parameter ? parameter.value : null
+                    ]);
+                });
+                return rows.map(function (row) {
+                    return row.map(tsvCell).join("\t");
+                }).join("\n");
+            }
+
+            function warningItems(data) {
+                var warnings = [];
+                [data.sqlAssessment, data.countSqlAssessment].forEach(function (assessment) {
+                    if (assessment && Array.isArray(assessment.warnings)) {
+                        assessment.warnings.forEach(function (warning) {
+                            warnings.push(warning);
+                        });
+                    }
+                });
+                return warnings;
+            }
+
+            function warningsCard(warnings, data, stack, dom) {
+                var card = element(dom.document, "section", "warnings-card");
+                var header = element(dom.document, "div", "card-header");
+                header.appendChild(element(
+                    dom.document, "div", "card-title", "Предупреждения · " + warnings.length
+                ));
+                card.appendChild(header);
+                var list = element(dom.document, "div", "warning-list");
+                warnings.forEach(function (warning) {
+                    var button = element(dom.document, "button", "warning-item");
+                    var location = warningLocation(warning);
+                    button.type = "button";
+                    button.appendChild(element(
+                        dom.document,
+                        "span",
+                        "warning-meta",
+                        (warning.source === "countSql" ? "Count SQL" : "SQL") + location
+                    ));
+                    button.appendChild(element(
+                        dom.document, "span", "warning-message", valueText(warning.message)
+                    ));
+                    button.addEventListener("click", function () {
+                        focusWarning(warning, data, stack);
+                    });
+                    list.appendChild(button);
+                });
+                card.appendChild(list);
+                return card;
+            }
+
+            function warningLocation(warning) {
+                if (typeof warning.line !== "number" || typeof warning.column !== "number") {
+                    return "";
+                }
+                return " · " + warning.line + ":" + warning.column;
+            }
+
+            function focusWarning(warning, data, stack) {
+                var source = warning.source === "countSql" ? "countSql" : "sql";
+                var sourceText = source === "countSql" ? (data.countSql || "") : (data.sql || "");
+                var sourceCard = Array.prototype.filter.call(stack.children, function (child) {
+                    return child.warningSource === source;
+                })[0];
+                if (!sourceCard) {
+                    return;
+                }
+                if (String(sourceCard.tagName).toLowerCase() === "details") {
+                    sourceCard.open = true;
+                }
+                renderWarningHighlight(sourceCard.codeOutputNode, sourceText, warning);
+                if (typeof sourceCard.scrollIntoView === "function") {
+                    sourceCard.scrollIntoView({ block: "nearest" });
+                }
+            }
+
+            function renderWarningHighlight(output, source, warning) {
+                var start = warning.startOffset;
+                var length = warning.length;
+                output.textContent = "";
+                if (typeof start !== "number" || typeof length !== "number"
+                    || start < 0 || length <= 0 || start + length > source.length) {
+                    output.textContent = source || "—";
+                    return;
+                }
+                output.appendChild(element(output.ownerDocument, "span", "", source.slice(0, start)));
+                var mark = element(
+                    output.ownerDocument, "mark", "warning-highlight", source.slice(start, start + length)
+                );
+                output.appendChild(mark);
+                output.appendChild(element(
+                    output.ownerDocument, "span", "", source.slice(start + length)
+                ));
+                if (typeof mark.scrollIntoView === "function") {
+                    mark.scrollIntoView({ block: "center", inline: "center" });
+                }
+            }
+
+            function tsvCell(value) {
+                var text;
+                if (value === null || value === undefined) {
+                    text = "";
+                } else if (typeof value === "object") {
+                    text = JSON.stringify(value);
+                } else {
+                    text = String(value);
+                }
+                return text
+                    .replace(/\\/g, "\\\\")
+                    .replace(/\t/g, "\\t")
+                    .replace(/\r\n|\r|\n/g, "\\n");
+            }
+
+            function copyButton(label, getText, dom) {
+                var button = element(dom.document, "button", "button copy-button", label);
+                button.type = "button";
+                button.copyLabel = label;
+                button.copyTitle = button.title;
+                button.addEventListener("click", function () {
+                    copyText(getText(), button);
+                });
+                return button;
+            }
+
+            function errorCard(type, message, dom) {
+                var box = element(dom.document, "section", "error-box");
+                box.appendChild(element(
+                    dom.document, "div", "error-type", type || "Error"
+                ));
+                box.appendChild(element(
+                    dom.document,
+                    "pre",
+                    "error-text",
+                    message || "Неизвестная ошибка."
+                ));
+                return box;
+            }
+
+            function diagnosticsDetails(data, dom) {
+                var details = dom.document.createElement("details");
+                var grid = element(dom.document, "div", "meta-grid");
+                var items = diagnosticItems(data);
+
+                details.appendChild(detailsHeader(
+                    "Диагностика инспектора",
+                    function () { return diagnosticLines(data).join("\n"); },
+                    dom
+                ));
+                items.forEach(function (item) {
+                    var row = element(dom.document, "div", "meta-row");
+                    row.appendChild(element(dom.document, "span", "", item[0]));
+                    row.appendChild(element(
+                        dom.document, "code", "", valueText(item[1])
+                    ));
+                    grid.appendChild(row);
+                });
+                details.appendChild(grid);
+
+                return details;
+            }
+
+            function diagnosticItems(data) {
+                var items = [
+                    ["Версия контракта", data.contractVersion],
+                    ["Версия инспектора", data.inspectorVersion],
+                    ["Этап ошибки", data.failureStage],
+                    ["Reflection-цепочка", data.reflectionPath],
+                    ["Тип провайдера", data.providerType],
+                    ["Сборка провайдера", data.providerAssemblyVersion],
+                    ["Тип коллекции", data.collectionType],
+                    ["Сборка коллекции", data.collectionAssemblyVersion],
+                    ["Внутренняя коллекция", data.innerCollectionType],
+                    ["Сборка внутренней коллекции", data.innerCollectionAssemblyVersion],
+                    ["Runtime-тип Query", data.queryRuntimeType],
+                    ["Сборка Query", data.queryAssemblyVersion],
+                    ["Значение QueryType", data.queryType]
+                ];
+
+                if (data.timingsMs) {
+                    items = items.concat([
+                        ["Весь вызов", millisecondsText(data.timingsMs.total)],
+                        ["Подготовка XQuery", millisecondsText(data.timingsMs.preprocessing)],
+                        ["Трансляция", millisecondsText(data.timingsMs.translation)],
+                        ["Извлечение команды", millisecondsText(data.timingsMs.extraction)],
+                        ["Оценка SQL", millisecondsText(data.timingsMs.assessment)],
+                        ["Освобождение коллекции", millisecondsText(data.timingsMs.cleanup)]
+                    ]);
+                }
+                return items;
+            }
+
+            function diagnosticLines(data) {
+                return diagnosticItems(data).map(function (item) {
+                    return item[0] + ": " + valueText(item[1]);
+                });
+            }
+
+            function millisecondsText(value) {
+                if (typeof value !== "number" || !isFinite(value)) {
+                    return "—";
+                }
+                return value.toFixed(3) + " ms";
+            }
+
+            function rawDetails(data, dom) {
+                var json = JSON.stringify(data, null, 2);
+                return collapsibleCodeCard(
+                    "Исходный JSON", json, json, false, undefined, dom, undefined
+                );
+            }
+
+            function valueText(value) {
+                if (value === null || value === undefined) {
+                    return "—";
+                }
+                if (typeof value === "object") {
+                    return JSON.stringify(value);
+                }
+                return String(value);
+            }
+
+            // DOM helper and copying
+            function element(ownerDocument, tag, className, text) {
+                var node = ownerDocument.createElement(tag);
+                if (className) {
+                    node.className = className;
+                }
+                if (text !== undefined) {
+                    node.textContent = text;
+                }
+                return node;
+            }
+
+            function copyText(text, button) {
+                var attempt = (button.copyAttempt || 0) + 1;
+                var result;
+                button.copyAttempt = attempt;
+
+                if (navigator.clipboard && window.isSecureContext) {
+                    try {
+                        result = Promise.resolve(navigator.clipboard.writeText(text)).then(
+                            function () { return { success: true }; },
+                            function () { return fallbackCopy(text); }
+                        );
+                    } catch (error) {
+                        result = Promise.resolve(fallbackCopy(text));
+                    }
+                } else {
+                    result = Promise.resolve(fallbackCopy(text));
+                }
+
+                return result.then(function (copyResult) {
+                    showCopyFeedback(button, attempt, copyResult);
+                    return copyResult.success;
+                });
+            }
+
+            function fallbackCopy(text) {
+                var helper;
+                try {
+                    helper = document.createElement("textarea");
+                    helper.value = text;
+                    helper.style.position = "fixed";
+                    helper.style.opacity = "0";
+                    document.body.appendChild(helper);
+                    helper.select();
+                    if (document.execCommand("copy") === true) {
+                        return { success: true };
+                    }
+                    return {
+                        success: false,
+                        reason: "Браузер не подтвердил копирование."
+                    };
+                } catch (error) {
+                    return {
+                        success: false,
+                        reason: "Браузер заблокировал копирование."
+                    };
+                } finally {
+                    if (helper && helper.parentNode) {
+                        helper.parentNode.removeChild(helper);
+                    }
+                }
+            }
+
+            function showCopyFeedback(button, attempt, result) {
+                if (button.copyAttempt !== attempt) {
+                    return;
+                }
+
+                if (result.success) {
+                    button.textContent = "Скопировано";
+                    button.title = button.copyTitle;
+                } else {
+                    button.textContent = "Не скопировано";
+                    button.title = result.reason;
+                }
+
+                window.setTimeout(function () {
+                    if (button.copyAttempt === attempt) {
+                        button.textContent = button.copyLabel;
+                    }
+                }, 1200);
+            }
+
+            function formatXQuery(source) {
+                return breakBeforeKeywords(source, ["order by", "for", "let", "where", "return"]);
+            }
+
+            function formatSql(source) {
+                return breakBeforeKeywords(source, [
+                    "left outer join", "right outer join", "full outer join",
+                    "inner join", "left join", "right join", "full join", "cross join",
+                    "order by", "group by", "union all", "select", "from", "where",
+                    "having", "join", "union", "and", "or"
+                ]);
+            }
+
+            function breakBeforeKeywords(source, keywords) {
+                var result = "";
+                var lower = source.toLowerCase();
+                var quote = "";
+                var bracket = false;
+                var lineComment = false;
+                var sqlBlockComment = false;
+                var xqueryCommentDepth = 0;
+                var index = 0;
+
+                while (index < source.length) {
+                    var current = source.charAt(index);
+                    var next = source.charAt(index + 1);
+
+                    if (lineComment) {
+                        result += current;
+                        if (current === "\n") {
+                            lineComment = false;
+                        }
+                        index += 1;
+                        continue;
+                    }
+
+                    if (sqlBlockComment) {
+                        result += current;
+                        if (current === "*" && next === "/") {
+                            result += next;
+                            sqlBlockComment = false;
+                            index += 2;
+                        } else {
+                            index += 1;
+                        }
+                        continue;
+                    }
+
+                    if (xqueryCommentDepth > 0) {
+                        result += current;
+                        if (current === "(" && next === ":") {
+                            result += next;
+                            xqueryCommentDepth += 1;
+                            index += 2;
+                        } else if (current === ":" && next === ")") {
+                            result += next;
+                            xqueryCommentDepth -= 1;
+                            index += 2;
+                        } else {
+                            index += 1;
+                        }
+                        continue;
+                    }
+
+                    if (quote) {
+                        result += current;
+                        if (current === quote) {
+                            if (next === quote) {
+                                result += next;
+                                index += 2;
+                                continue;
+                            }
+                            quote = "";
+                        }
+                        index += 1;
+                        continue;
+                    }
+
+                    if (bracket) {
+                        result += current;
+                        if (current === "]") {
+                            bracket = false;
+                        }
+                        index += 1;
+                        continue;
+                    }
+
+                    if (current === "'" || current === "\"") {
+                        quote = current;
+                        result += current;
+                        index += 1;
+                        continue;
+                    }
+                    if (current === "[") {
+                        bracket = true;
+                        result += current;
+                        index += 1;
+                        continue;
+                    }
+                    if (current === "-" && next === "-") {
+                        lineComment = true;
+                        result += current + next;
+                        index += 2;
+                        continue;
+                    }
+                    if (current === "/" && next === "*") {
+                        sqlBlockComment = true;
+                        result += current + next;
+                        index += 2;
+                        continue;
+                    }
+                    if (current === "(" && next === ":") {
+                        xqueryCommentDepth = 1;
+                        result += current + next;
+                        index += 2;
+                        continue;
+                    }
+
+                    var matched = "";
+                    var keywordIndex;
+                    for (keywordIndex = 0; keywordIndex < keywords.length; keywordIndex += 1) {
+                        var keyword = keywords[keywordIndex];
+                        var before = index > 0 ? lower.charAt(index - 1) : "";
+                        var after = lower.charAt(index + keyword.length);
+                        if (lower.slice(index, index + keyword.length) === keyword
+                            && !isWordCharacter(before)
+                            && !isWordCharacter(after)) {
+                            matched = source.slice(index, index + keyword.length);
+                            break;
+                        }
+                    }
+
+                    if (matched) {
+                        result = result.replace(/[ \t]+$/g, "");
+                        if (result && result.charAt(result.length - 1) !== "\n") {
+                            result += "\n";
+                        }
+                        result += matched;
+                        index += matched.length;
+                    } else {
+                        result += current;
+                        index += 1;
+                    }
+                }
+
+                return result;
+            }
+
+            function isWordCharacter(value) {
+                return value !== "" && /[A-Za-z0-9_$:\/.\-]/.test(value);
+            }
+        }());
+    </script>
+</div>
+<%
+}
+%>
