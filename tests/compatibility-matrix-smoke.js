@@ -11,7 +11,7 @@ const smokeSource = fs.readFileSync(
     path.join(root, "tests", "XQueryInspector.SmokeTests", "Program.cs"),
     "utf8"
 );
-const expectedBuilds = ["434", "906", "1132", "1333", "1515"];
+const expectedBuilds = ["434", "906", "1132", "1333", "1525"];
 const expectedProviders = ["MSSQL", "PostgreSQL"];
 
 assert(matrix.schemaVersion === 1, "Unsupported matrix schema version.");

@@ -11,8 +11,16 @@ const agentPath = path.join(
 );
 const agentBytes = fs.readFileSync(agentPath);
 const agent = agentBytes.toString("utf8").replace(/^\uFEFF/, "");
+const manualAgentPath = path.join(
+    root,
+    "websoft",
+    "xquery-inspector-compatibility-agent-2.js"
+);
+const manualAgentBytes = fs.readFileSync(manualAgentPath);
+const manualAgent = manualAgentBytes.toString("utf8").replace(/^\uFEFF/, "");
 
 verifyFileProperties();
+verifyManualAgentFileProperties();
 verifyRun("BigInt", 5, 0, 0);
 verifyRun("bigint", 5, 0, 0);
 verifyFatalFailure();
@@ -73,6 +81,41 @@ function verifyFileProperties() {
             }
         );
     });
+}
+
+function verifyManualAgentFileProperties() {
+    assert(
+        manualAgentBytes[0] === 0xef
+            && manualAgentBytes[1] === 0xbb
+            && manualAgentBytes[2] === 0xbf,
+        "Manual compatibility agent UTF-8 BOM is missing."
+    );
+    assert(
+        !/[^\r]\n/.test(manualAgent),
+        "Manual compatibility agent contains line endings other than CRLF."
+    );
+    assert(
+        manualAgent.includes("function RunXQueryInspectorManualChecks()")
+            && manualAgent.trim().endsWith("RunXQueryInspectorManualChecks();"),
+        "Manual compatibility agent has no explicit entry point."
+    );
+    assert(
+        manualAgent.includes("StrCharCount(boundaryXQuery) == 200000")
+            && manualAgent.includes('result.failureStage == "invoke-xquery"')
+            && manualAgent.includes("'unfinished"),
+        "Manual compatibility agent does not validate the required boundary and parser failure."
+    );
+    assert(
+        !/\.(?:indexOf|toLowerCase|replace|substr|substring|includes|startsWith|join)\s*\(/.test(
+            manualAgent
+        )
+            && !/\bMath\s*\./.test(manualAgent),
+        "Manual compatibility agent uses JavaScript string or Math methods instead of SP-XML functions."
+    );
+    assert(
+        !/&&|\|\||!\s*(?!=)/.test(manualAgent),
+        "Manual compatibility agent contains a compound or unary logical expression."
+    );
 }
 
 function verifyRun(parameterType, expectedPassed, expectedFailed, expectedSkipped) {

@@ -97,26 +97,26 @@
       "coverage": "full-protocol"
     },
     {
-      "build": "1515",
-      "websoftVersion": "2025.2.1515",
+      "build": "1525",
+      "websoftVersion": "2025.2.1525",
       "unibridgeVersion": "2.26.8.12",
       "provider": "MSSQL",
       "providerVersion": "2.26.8.12",
       "runtimeTarget": "net9.0",
       "runtimeStructure": "collection-dc-query-command",
-      "status": "not-tested",
-      "reason": "Стенд недоступен; загрузка net6.0 DLL в net9.0 host не проверена."
+      "status": "verified",
+      "coverage": "full-protocol"
     },
     {
-      "build": "1515",
-      "websoftVersion": "2025.2.1515",
+      "build": "1525",
+      "websoftVersion": "2025.2.1525",
       "unibridgeVersion": "2.26.8.12",
       "provider": "PostgreSQL",
       "providerVersion": "2.26.8.12",
       "runtimeTarget": "net9.0",
       "runtimeStructure": "collection-dc-query-command",
-      "status": "not-tested",
-      "reason": "Стенд недоступен; загрузка net6.0 DLL в net9.0 host не проверена."
+      "status": "verified",
+      "coverage": "full-protocol"
     }
   ]
 }
