@@ -43,7 +43,7 @@ const getContractState = clientApi.getContractState;
 const effectiveXQuery = clientApi.effectiveXQuery;
 const resultCards = clientApi.resultCards;
 const resultViewModel = clientApi.resultViewModel;
-const sqlOffsetWarningText = clientApi.sqlOffsetWarningText;
+const inspectionSqlWarningText = clientApi.inspectionSqlWarningText;
 
 assert(getContractState({ contractVersion: 1 }) === "supported", "Contract 1 was rejected.");
 assert(getContractState({ success: true }) === "legacy", "Legacy response was rejected.");
@@ -57,6 +57,13 @@ assert(
     "Contract response adaptation is incorrect."
 );
 assert(
+    resultViewModel({ contractVersion: 1, operation: "execute", success: true }).statusText
+        === "Выполнен успешно"
+        && resultViewModel({ contractVersion: 1, operation: "execute", success: false }).statusText
+            === "Выполнен с ошибкой",
+    "Execution status adaptation is incorrect."
+);
+assert(
     effectiveXQuery({ effectiveXQuery: "prepared", xQuery: "source" }) === "prepared",
     "Effective XQuery was not selected."
 );
@@ -68,15 +75,20 @@ assert(
 
 verifyResultCards(resultCards);
 assert(
-    sqlOffsetWarningText({ pageSize: 400 }).includes("400 записей")
-        && sqlOffsetWarningText({ pageSize: 400 }).includes("сортировку")
-        && sqlOffsetWarningText({ pageSize: 400 }).includes("пагинацию"),
+    inspectionSqlWarningText({ sqlOffset: true, pageSize: 400 }).includes("400 записей")
+        && inspectionSqlWarningText({ sqlOffset: true, pageSize: 400 }).includes("сортировку")
+        && inspectionSqlWarningText({ sqlOffset: true, pageSize: 400 }).includes("пагинацию")
+        && inspectionSqlWarningText({ sqlOffset: true, pageSize: 400 }).includes("Выполнение"),
     "SqlOffset warning does not explain runtime SQL changes and page size."
 );
 assert(
-    sqlOffsetWarningText({ pageSize: null }).includes("Обычно")
-        && sqlOffsetWarningText({ pageSize: null }).includes("400 записей"),
+    inspectionSqlWarningText({ sqlOffset: true, pageSize: null }).includes("400 записей"),
     "SqlOffset warning does not provide the usual page size fallback."
+);
+assert(
+    !inspectionSqlWarningText({ sqlOffset: false }).includes("пагинацию")
+        && inspectionSqlWarningText({ sqlOffset: false }).includes("Предварительный SQL"),
+    "Ordinary preliminary SQL warning mentions disabled pagination."
 );
 verifyTemplateFileProperties();
 
@@ -160,19 +172,44 @@ assert(
     "Parameter TSV value conversion is incorrect."
 );
 
-const diagnosticLines = clientApi.diagnosticLines;
+const technicalDiagnosticSections = clientApi.technicalDiagnosticSections;
+const technicalDiagnosticLines = clientApi.technicalDiagnosticLines;
 const millisecondsText = clientApi.millisecondsText;
 const diagnosticData = {
     contractVersion: 1,
     inspectorVersion: "1.2.1",
+    success: true,
     failureStage: null,
     timingsMs: { total: 4 }
 };
-const lines = diagnosticLines(diagnosticData);
-assert(lines[0] === "Версия контракта: 1", "Contract diagnostic is incorrect.");
+const diagnosticSections = technicalDiagnosticSections({
+    inspect: {
+        type: "result",
+        viewModel: { data: diagnosticData }
+    },
+    execute: null
+}, false);
+const lines = technicalDiagnosticLines(diagnosticSections);
+assert(lines.includes("Версия контракта: 1"), "Contract diagnostic is incorrect.");
 assert(
     lines.includes("Этап ошибки: —"),
     "Missing diagnostic value does not use the fallback."
+);
+const mergedEnvironment = technicalDiagnosticSections({
+    inspect: {
+        type: "result",
+        viewModel: { data: { providerType: "CompleteProvider" } }
+    },
+    execute: {
+        type: "result",
+        viewModel: { data: { providerType: null, success: false } }
+    }
+}, false)[0];
+assert(
+    mergedEnvironment.items.some(function (item) {
+        return item[0] === "Тип провайдера" && item[1] === "CompleteProvider";
+    }),
+    "Sparse execution diagnostics hid complete inspection environment data."
 );
 assert(millisecondsText(null) === "—", "Null timing does not use the fallback.");
 assert(millisecondsText(undefined) === "—", "Missing timing does not use the fallback.");
@@ -208,19 +245,24 @@ async function verifyTransportBehavior() {
         requestedOptions = options;
         return Promise.resolve(response(true, 200, '{"contractVersion":1,"success":true}'));
     }, "/inspect");
-    const result = await transport.inspect("for $x return $x");
+    const result = await transport.request("inspect", "for $x return $x");
     assert(result.success === true, "Transport did not parse a successful response.");
     assert(requestedUrl === "/inspect", "Transport changed the endpoint.");
     assert(
         requestedOptions.body === "action=inspect&xquery=for%20%24x%20return%20%24x",
         "Transport changed the request body."
     );
+    await transport.request("execute", "for $x return $x");
+    assert(
+        requestedOptions.body === "action=execute&xquery=for%20%24x%20return%20%24x",
+        "Transport did not send the execution action."
+    );
 
     transport = clientApi.createTransport(function () {
         return Promise.resolve(response(false, 500, "server failed"));
     }, "/inspect");
     await assertRejects(
-        transport.inspect("secret request"),
+        transport.request("execute", "secret request"),
         "server failed",
         "Transport error response changed."
     );
@@ -229,7 +271,7 @@ async function verifyTransportBehavior() {
         return Promise.resolve(response(true, 200, "<html>portal</html>"));
     }, "/inspect");
     await assertRejects(
-        transport.inspect("secret request"),
+        transport.request("inspect", "secret request"),
         "Сервер вернул HTML вместо JSON",
         "HTML transport response was not rejected."
     );
@@ -283,6 +325,78 @@ async function verifyRendererAndInstanceIsolation() {
         first.nodes.result.textContent.includes("independent render")
             && firstFetchCount === 1,
         "Renderer was not independently callable."
+    );
+
+    const preservedRoot = harness.createRoot("preserved");
+    const preservedApp = clientApi.initialize(preservedRoot.root, function (url, options) {
+        if (options.body.indexOf("action=execute") >= 0) {
+            return Promise.resolve(response(
+                true,
+                200,
+                '{"contractVersion":1,"operation":"execute","success":true,'
+                    + '"executedSql":"select executed","executedParameters":[]}'
+            ));
+        }
+        return Promise.resolve(response(
+            true,
+            200,
+            '{"contractVersion":1,"operation":"inspect","success":true,'
+                + '"sql":"select inspected","parameters":[]}'
+        ));
+    }, function () { return 40; });
+    preservedRoot.nodes.editor.value = "preserved query";
+    await preservedApp.execute();
+    assert(
+        preservedRoot.nodes.result.textContent.includes("select executed"),
+        "Execution result was not rendered."
+    );
+    await preservedApp.inspect();
+    assert(
+        preservedRoot.nodes.result.textContent.includes("select inspected")
+            && !preservedRoot.nodes.result.textContent.includes("select executed"),
+        "Inspection tab did not show its own result."
+    );
+    preservedRoot.nodes.executeTab.listeners.click();
+    assert(
+        preservedRoot.nodes.result.textContent.includes("select executed")
+            && !preservedRoot.nodes.result.textContent.includes("select inspected"),
+        "Inspection overwrote the saved execution result."
+    );
+    assert(
+        preservedRoot.nodes.executeTab["aria-selected"] === "true"
+            && preservedRoot.nodes.inspectTab["aria-selected"] === "false",
+        "Execution result tab selection is incorrect."
+    );
+    assert(
+        preservedRoot.nodes.technical.textContent.includes("select executed")
+            && preservedRoot.nodes.technical.textContent.includes("select inspected")
+            && preservedRoot.nodes.technical.textContent.includes("Среда")
+            && preservedRoot.nodes.technical.textContent.includes("Инспекция")
+            && preservedRoot.nodes.technical.textContent.includes("Выполнение"),
+        "Common technical data did not accumulate both server responses."
+    );
+    preservedRoot.nodes.editor.value = "";
+    await preservedApp.inspect();
+    assert(
+        preservedApp.state.outputs.inspect.type === "result"
+            && preservedApp.state.outputs.execute.type === "result"
+            && preservedRoot.nodes.technical.textContent.includes("select executed")
+            && preservedRoot.nodes.technical.textContent.includes("select inspected"),
+        "Client-side validation replaced accumulated server responses."
+    );
+    preservedRoot.nodes.editor.value = "changed query";
+    preservedRoot.nodes.editor.listeners.input();
+    assert(
+        preservedRoot.nodes.staleBadge.hidden === false
+            && preservedRoot.nodes.technical.textContent.includes("предыдущей версии XQuery"),
+        "Changed XQuery did not mark technical data as stale."
+    );
+    await preservedApp.inspect();
+    assert(
+        preservedRoot.nodes.staleBadge.hidden === true
+            && !preservedRoot.nodes.technical.textContent.includes("select executed")
+            && preservedRoot.nodes.technical.textContent.includes("Выполнение: ещё не запускалось"),
+        "A new XQuery session retained incompatible execution data."
     );
 
     const pendingRoot = harness.createRoot("pending");
@@ -462,36 +576,31 @@ function verifyResultCards(getCards) {
         cleanupError: null
     });
     assertCardKinds(supportedSuccess, [
-        "sql-offset-warning",
+        "inspection-sql-warning",
         "sql",
         "parameters",
         "effective-xquery",
-        "count-sql",
-        "diagnostics",
-        "raw"
+        "count-sql"
     ], "Successful result card order is incorrect.");
     assert(
         supportedSuccess[3].expanded === false
-            && supportedSuccess[4].expanded === false
-            && supportedSuccess[5].expanded === false
-            && supportedSuccess[6].expanded === false,
+            && supportedSuccess[4].expanded === false,
         "Successful result card expansion state is incorrect."
     );
 
     const legacy = getCards({ success: true });
     assertCardKinds(legacy, [
         "legacy-warning",
+        "inspection-sql-warning",
         "sql",
         "parameters",
-        "effective-xquery",
-        "diagnostics",
-        "raw"
+        "effective-xquery"
     ], "Legacy result card order is incorrect.");
 
     const failure = getCards({ contractVersion: 1, success: false });
     assertCardKinds(
         failure,
-        ["error", "diagnostics", "raw"],
+        ["error"],
         "Failed result card order is incorrect."
     );
 
@@ -502,9 +611,7 @@ function verifyResultCards(getCards) {
     });
     assertCardKinds(cleanupFailure, [
         "error",
-        "cleanup-error",
-        "diagnostics",
-        "raw"
+        "cleanup-error"
     ], "Cleanup-error card order is incorrect.");
 
     const unsupported = getCards({
@@ -513,10 +620,40 @@ function verifyResultCards(getCards) {
     });
     assertCardKinds(
         unsupported,
-        ["contract-error", "raw"],
+        ["contract-error"],
         "Unsupported contract card order is incorrect."
     );
-    assert(unsupported[1].expanded === false, "Unsupported raw JSON card must be collapsed.");
+
+    const execution = getCards({
+        contractVersion: 1,
+        operation: "execute",
+        success: true,
+        executedSql: "select id from collaborators",
+        countSql: "select count(*) from collaborators",
+        executedParameters: []
+    });
+    assertCardKinds(execution, [
+        "executed-sql-warning",
+        "executed-sql",
+        "executed-parameters",
+        "effective-xquery",
+        "execution-count-sql"
+    ], "Execution result card order is incorrect.");
+
+    const executionFailure = getCards({
+        contractVersion: 1,
+        operation: "execute",
+        success: false,
+        sql: "select broken",
+        parameters: [],
+        error: "database failed"
+    });
+    assertCardKinds(executionFailure, [
+        "sql",
+        "parameters",
+        "error",
+        "effective-xquery"
+    ], "Execution failure card order is incorrect.");
 
     const obsoleteAssessments = getCards({
         contractVersion: 1,
@@ -525,11 +662,10 @@ function verifyResultCards(getCards) {
         countSqlAssessment: { warnings: [{ source: "countSql" }] }
     });
     assertCardKinds(obsoleteAssessments, [
+        "inspection-sql-warning",
         "sql",
         "parameters",
-        "effective-xquery",
-        "diagnostics",
-        "raw"
+        "effective-xquery"
     ], "Obsolete SQL assessments still affect the client.");
 }
 
@@ -623,9 +759,10 @@ function createClientApi(options) {
     const exported = [
         "config", "initialize", "getDom", "createTransport", "createRenderer",
         "resultViewModel", "getContractState", "effectiveXQuery", "resultCards",
-        "sqlOffsetWarningText",
+        "inspectionSqlWarningText",
         "xQueryCharacterCount", "xQueryValidationMessage", "parametersTsv",
-        "diagnosticLines", "millisecondsText", "errorCard", "copyText",
+        "technicalDiagnosticSections", "technicalDiagnosticLines",
+        "millisecondsText", "errorCard", "copyText",
         "formatXQuery", "formatSql"
     ].map(function (name) {
         return name + ": " + name;
@@ -694,8 +831,14 @@ function createDomHarness() {
             lineNumbers: createTestNode("div"),
             inspectButton: createTestNode("button"),
             inspectButtonLabel: createTestNode("span"),
+            executeButton: createTestNode("button"),
+            executeButtonLabel: createTestNode("span"),
+            inspectTab: createTestNode("button"),
+            executeTab: createTestNode("button"),
             result: createTestNode("div"),
             resultStatus: createTestNode("div"),
+            technical: createTestNode("div"),
+            staleBadge: createTestNode("span"),
             formatButton: createTestNode("button"),
             sampleButton: createTestNode("button"),
             clearButton: createTestNode("button")
@@ -705,13 +848,20 @@ function createDomHarness() {
             "#xqi-line-numbers": nodes.lineNumbers,
             "#xqi-inspect-button": nodes.inspectButton,
             "#xqi-inspect-button-label": nodes.inspectButtonLabel,
+            "#xqi-execute-button": nodes.executeButton,
+            "#xqi-execute-button-label": nodes.executeButtonLabel,
+            "#xqi-inspect-tab": nodes.inspectTab,
+            "#xqi-execute-tab": nodes.executeTab,
             "#xqi-result": nodes.result,
             "#xqi-result-status": nodes.resultStatus,
+            "#xqi-technical": nodes.technical,
+            "#xqi-stale-badge": nodes.staleBadge,
             "#xqi-format-button": nodes.formatButton,
             "#xqi-sample-button": nodes.sampleButton,
             "#xqi-clear-button": nodes.clearButton
         };
         nodes.inspectButton.appendChild(nodes.inspectButtonLabel);
+        nodes.executeButton.appendChild(nodes.executeButtonLabel);
         nodes.editor.focus = function () { nodes.editor.focused = true; };
         const root = createTestNode("div");
         root.name = name;

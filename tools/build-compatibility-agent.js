@@ -35,7 +35,14 @@ if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.scenarios)) {
 }
 
 const scenarioIds = new Set();
-const supportedKinds = new Set(["basic", "hierarchy", "invalid", "oversized"]);
+const supportedKinds = new Set([
+    "basic",
+    "boundary",
+    "execution",
+    "hierarchy",
+    "invalid",
+    "oversized"
+]);
 const supportedProviders = new Set(["mssql", "postgresql"]);
 const scenarios = manifest.scenarios.map(scenario => {
     if (!scenario.id || scenarioIds.has(scenario.id) || !scenario.kind) {
@@ -85,7 +92,10 @@ const scenarios = manifest.scenarios.map(scenario => {
             process.exit(1);
         }
     } else if (scenario.generated) {
-        if (scenario.generated !== "max-xquery-plus-one") {
+        if (
+            scenario.generated !== "max-xquery"
+            && scenario.generated !== "max-xquery-plus-one"
+        ) {
             console.error("Unsupported generated scenario: " + scenario.generated);
             process.exit(1);
         }
@@ -98,9 +108,12 @@ const scenarios = manifest.scenarios.map(scenario => {
 });
 const requiredScenarioIds = [
     "basic-parameter",
+    "basic-execution",
     "hierarchy-child",
     "hierarchy-self",
     "invalid-query",
+    "invalid-provider-query",
+    "max-length-xquery",
     "oversized-xquery"
 ];
 for (const scenarioId of requiredScenarioIds) {

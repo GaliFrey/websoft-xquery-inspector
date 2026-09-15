@@ -21,8 +21,9 @@ const manualAgent = manualAgentBytes.toString("utf8").replace(/^\uFEFF/, "");
 
 verifyFileProperties();
 verifyManualAgentFileProperties();
-verifyRun("BigInt", 5, 0, 0);
-verifyRun("bigint", 5, 0, 0);
+verifyRun("BigInt", 8, 0, 0);
+verifyRun("bigint", 8, 0, 0);
+verifyExecutionFailure();
 verifyFatalFailure();
 
 console.log("Compatibility agent smoke tests passed.");
@@ -39,6 +40,10 @@ function verifyFileProperties() {
     assert(
         !agent.includes("__XQI_"),
         "Compatibility agent contains an unresolved build marker."
+    );
+    assert(
+        agent.includes("START|agentContract=2|inspector="),
+        "Compatibility agent contract was not updated."
     );
     assert(
         !/^\s*\(function\s*\(/.test(agent)
@@ -142,8 +147,16 @@ function verifyRun(parameterType, expectedPassed, expectedFailed, expectedSkippe
         "Agent did not log every started scenario."
     );
     assert(
-        calls.some(xquery => xquery.length === 200001),
+        calls.some(call => call.xquery.length === 200001),
         "Oversized boundary scenario was not generated."
+    );
+    assert(
+        calls.some(call => call.operation === "inspect" && call.xquery.length === 200000),
+        "Maximum-length boundary scenario was not generated."
+    );
+    assert(
+        calls.some(call => call.operation === "execute"),
+        "Execution scenario did not call Execute()."
     );
     assert(
         harness.logs.every(line =>
@@ -165,6 +178,42 @@ function verifyRun(parameterType, expectedPassed, expectedFailed, expectedSkippe
         harness.logs.some(line => line.includes("XQI|PASS|scenario=hierarchy-child"))
             && harness.logs.some(line => line.includes("XQI|PASS|scenario=hierarchy-self")),
         "Common hierarchy scenarios did not run."
+    );
+    assert(
+        harness.logs.some(line => line.includes("XQI|PASS|scenario=basic-execution"))
+            && harness.logs.some(line => line.includes("|operation=execute"))
+            && harness.logs.some(line => line.includes("|executionSuccess=true")),
+        "Execution scenario did not report the expected diagnostic summary."
+    );
+}
+
+function verifyExecutionFailure() {
+    const calls = [];
+    const inspector = createInspector("BigInt", calls);
+    inspector.Execute = function (provider, xquery) {
+        calls.push({ operation: "execute", xquery: xquery });
+        return result({
+            operation: "execute",
+            success: false,
+            executionAttempted: true,
+            executionSuccess: false,
+            failureStage: "execute-query",
+            errorType: "Synthetic.DatabaseException",
+            error: "Synthetic execution failure."
+        });
+    };
+    const harness = executeAgent(inspector);
+    assert(
+        harness.logs.some(line => line.includes(
+            "XQI|FAIL|scenario=basic-execution|checks=execution-failed"
+        )),
+        "Execution failure was not attributed to the execution scenario."
+    );
+    assert(
+        harness.logs.some(line => line.includes(
+            "XQI|SUMMARY|passed=7|failed=1|skipped=0"
+        )),
+        "Execution failure summary is incorrect."
     );
 }
 
@@ -276,7 +325,7 @@ function createInspector(parameterType, calls) {
                 : "Synthetic.PostgresqlProvider, Synthetic";
         },
         Inspect: function (provider, xquery) {
-            calls.push(xquery);
+            calls.push({ operation: "inspect", xquery: xquery });
             if (xquery.length === 200001) {
                 return result({
                     success: false,
@@ -289,6 +338,13 @@ function createInspector(parameterType, calls) {
                     success: false,
                     failureStage: "preprocess-xquery",
                     errorType: "System.FormatException"
+                });
+            }
+            if (xquery.includes("$elem/fullname = 'unfinished")) {
+                return result({
+                    success: false,
+                    failureStage: "invoke-xquery",
+                    errorType: "Synthetic.ParserException"
                 });
             }
             if (xquery.includes("IsHierChild")) {
@@ -311,6 +367,35 @@ function createInspector(parameterType, calls) {
                 reflectionPath: "collection.dc.Query.command",
                 parameters: [{ name: "@p0", type: parameterType, value: "6148914691236517121" }]
             });
+        },
+        Execute: function (provider, xquery) {
+            calls.push({ operation: "execute", xquery: xquery });
+            return result({
+                operation: "execute",
+                success: true,
+                sql: "select secret_value from collaborators where id=@p0",
+                countSql: "select count(*) from collaborators",
+                effectiveXQuery: xquery,
+                reflectionPath: "collection.dc.Query.command",
+                parameters: [
+                    { name: "@p0", type: parameterType, value: "6148914691236517121" }
+                ],
+                executionAttempted: true,
+                executionSuccess: true,
+                rowsRead: 0,
+                executedSql: "select secret_value from collaborators where id=@p0 limit 400",
+                executedParameters: [
+                    { name: "@p0", type: parameterType, value: "6148914691236517121" }
+                ],
+                executedCommandCaptureError: null,
+                timingsMs: {
+                    total: 2,
+                    translation: 0.5,
+                    extraction: 0.25,
+                    execution: 1,
+                    cleanup: 0.05
+                }
+            });
         }
     };
 }
@@ -318,7 +403,8 @@ function createInspector(parameterType, calls) {
 function result(overrides) {
     return JSON.stringify(Object.assign({
         contractVersion: 1,
-        inspectorVersion: "1.3.1",
+        inspectorVersion: "1.4.2",
+        operation: "inspect",
         providerType: "Synthetic.Provider, Synthetic",
         providerAssemblyVersion: "1.25.3.4",
         collectionAssemblyVersion: "1.25.3.4",

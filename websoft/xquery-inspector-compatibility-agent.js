@@ -2,13 +2,22 @@
 {
     var logName = "xquery_inspector_compatibility";
     var supportedContractVersion = 1;
-    var expectedInspectorVersion = "1.3.1";
+    var expectedInspectorVersion = "1.4.2";
     var knownReflectionPaths = ["collection.dc.Query.command"];
     var maxXQueryLength = 200000;
     var scenarios = [
     {
         "id": "basic-parameter",
         "kind": "basic",
+        "expectedFailureStage": null,
+        "expectedParameterValue": "6148914691236517121",
+        "provider": null,
+        "xquery": "for $elem in collaborators\nwhere $elem/id = 6148914691236517121\nreturn $elem/Fields('id', 'fullname')",
+        "generated": null
+    },
+    {
+        "id": "basic-execution",
+        "kind": "execution",
         "expectedFailureStage": null,
         "expectedParameterValue": "6148914691236517121",
         "provider": null,
@@ -43,6 +52,24 @@
         "generated": null
     },
     {
+        "id": "invalid-provider-query",
+        "kind": "invalid",
+        "expectedFailureStage": "invoke-xquery",
+        "expectedParameterValue": null,
+        "provider": null,
+        "xquery": "for $elem in collaborators\nwhere $elem/fullname = 'unfinished\nreturn $elem/id",
+        "generated": null
+    },
+    {
+        "id": "max-length-xquery",
+        "kind": "boundary",
+        "expectedFailureStage": null,
+        "expectedParameterValue": null,
+        "provider": null,
+        "xquery": null,
+        "generated": "max-xquery"
+    },
+    {
         "id": "oversized-xquery",
         "kind": "oversized",
         "expectedFailureStage": null,
@@ -65,7 +92,7 @@
             loggingEnabled = true;
             writeLog(
                 "RUN",
-                "START|agentContract=1|inspector=" + expectedInspectorVersion
+                "START|agentContract=2|inspector=" + expectedInspectorVersion
                     + "|scenarios=" + ArrayCount(scenarios)
             );
 
@@ -142,8 +169,24 @@
             {
                 xquery = repeatText("x", maxXQueryLength + 1);
             }
+            else if (scenario.generated == "max-xquery")
+            {
+                var prefix = "for $elem in collaborators return $elem/id";
+                xquery = prefix + repeatText(
+                    " ",
+                    maxXQueryLength - StrCharCount(prefix)
+                );
+            }
 
-            var resultText = inspector.Inspect(provider, xquery);
+            var resultText;
+            if (scenario.kind == "execution")
+            {
+                resultText = inspector.Execute(provider, xquery);
+            }
+            else
+            {
+                resultText = inspector.Inspect(provider, xquery);
+            }
             var result = ParseJson(resultText);
             var errors = validateResult(scenario, result, context);
             if (scenario.kind == "basic")
@@ -212,6 +255,17 @@
         {
             errors.push("inspector-version");
         }
+        if (scenario.kind == "execution")
+        {
+            if (result.operation != "execute")
+            {
+                errors.push("operation");
+            }
+        }
+        else if (result.operation != "inspect")
+        {
+            errors.push("operation");
+        }
         if (hasText(result.cleanupError))
         {
             errors.push("cleanup-error");
@@ -232,6 +286,10 @@
         else if (scenario.kind == "hierarchy")
         {
             validateHierarchy(result, errors);
+        }
+        else if (scenario.kind == "execution")
+        {
+            validateExecution(scenario, result, context, errors);
         }
         else if (scenario.kind == "invalid")
         {
@@ -266,12 +324,95 @@
                 errors.push("xquery-limit");
             }
         }
+        else if (scenario.kind == "boundary")
+        {
+            if (result.success != true)
+            {
+                errors.push("xquery-boundary");
+            }
+            else if (hasText(result.sql) == false)
+            {
+                errors.push("xquery-boundary");
+            }
+            else if (hasSuccessfulTimings(result) == false)
+            {
+                errors.push("xquery-boundary");
+            }
+        }
         else
         {
             errors.push("unknown-scenario-kind");
         }
 
         return errors;
+    }
+
+    function validateExecution(scenario, result, context, errors)
+    {
+        if (result.success != true)
+        {
+            errors.push("execution-failed");
+            return;
+        }
+        if (result.executionAttempted != true)
+        {
+            errors.push("execution-not-attempted");
+        }
+        if (result.executionSuccess != true)
+        {
+            errors.push("execution-status");
+        }
+        if (isMissing(result.rowsRead))
+        {
+            errors.push("execution-row-count");
+        }
+        else if (result.rowsRead < 0)
+        {
+            errors.push("execution-row-count");
+        }
+        if (hasText(result.executedSql) == false)
+        {
+            errors.push("empty-executed-sql");
+        }
+        if (hasText(result.countSql) == false)
+        {
+            errors.push("empty-count-sql");
+        }
+        if (hasText(result.executedCommandCaptureError))
+        {
+            errors.push("executed-command-capture");
+        }
+        if (knownReflectionPath(result.reflectionPath) == false)
+        {
+            errors.push("reflection-path");
+        }
+        if (hasRuntimeMetadata(result) == false)
+        {
+            errors.push("runtime-metadata");
+        }
+        if (hasSuccessfulTimings(result) == false)
+        {
+            errors.push("successful-timings");
+        }
+        else if (isMissing(result.timingsMs.execution))
+        {
+            errors.push("execution-timing");
+        }
+
+        validateParameterList(
+            scenario,
+            result.parameters,
+            context,
+            errors,
+            ""
+        );
+        validateParameterList(
+            scenario,
+            result.executedParameters,
+            context,
+            errors,
+            "executed-"
+        );
     }
 
     function validateBasic(scenario, result, context, errors)
@@ -308,25 +449,36 @@
         {
             errors.push("successful-timings");
         }
-        if (isMissing(result.parameters))
+        validateParameterList(
+            scenario,
+            result.parameters,
+            context,
+            errors,
+            ""
+        );
+    }
+
+    function validateParameterList(scenario, parameters, context, errors, prefix)
+    {
+        if (isMissing(parameters))
         {
-            errors.push("parameters");
+            errors.push(prefix + "parameters");
             return;
         }
-        if (ArrayCount(result.parameters) == 0)
+        if (ArrayCount(parameters) == 0)
         {
-            errors.push("parameters");
+            errors.push(prefix + "parameters");
             return;
         }
 
-        var parameter = result.parameters[0];
+        var parameter = parameters[0];
         if (hasText(parameter.name) == false)
         {
-            errors.push("parameter-metadata");
+            errors.push(prefix + "parameter-metadata");
         }
         else if (hasText(parameter.type) == false)
         {
-            errors.push("parameter-metadata");
+            errors.push(prefix + "parameter-metadata");
         }
         if (parameter.type == "BigInt")
         {
@@ -338,14 +490,14 @@
         }
         else
         {
-            errors.push("provider-kind");
+            errors.push(prefix + "provider-kind");
         }
 
         if (IsEmptyValue(scenario.expectedParameterValue) == false)
         {
             if (("" + parameter.value) != scenario.expectedParameterValue)
             {
-                errors.push("parameter-value");
+                errors.push(prefix + "parameter-value");
             }
         }
     }
@@ -388,6 +540,10 @@
         {
             details += "|inspector=" + safeField(result.inspectorVersion);
         }
+        if (hasText(result.operation))
+        {
+            details += "|operation=" + safeField(result.operation);
+        }
         if (hasText(result.reflectionPath))
         {
             details += "|reflection=" + safeField(result.reflectionPath);
@@ -429,6 +585,40 @@
         if (hasText(result.sql))
         {
             details += "|sqlLength=" + StrCharCount(result.sql);
+        }
+        if (hasText(result.executedSql))
+        {
+            details += "|executedSqlLength=" + StrCharCount(result.executedSql);
+        }
+        if (isMissing(result.executedParameters) == false)
+        {
+            details += "|executedParameters=" + ArrayCount(result.executedParameters);
+            var executedParameterTypes = [];
+            var executedParameterIndex;
+            for (
+                executedParameterIndex = 0;
+                executedParameterIndex < ArrayCount(result.executedParameters);
+                executedParameterIndex++
+            )
+            {
+                executedParameterTypes.push(
+                    safeField(result.executedParameters[executedParameterIndex].type)
+                );
+            }
+            details += "|executedParameterTypes="
+                + joinValues(executedParameterTypes, ",");
+        }
+        if (isMissing(result.executionAttempted) == false)
+        {
+            details += "|executionAttempted=" + safeField(result.executionAttempted);
+        }
+        if (isMissing(result.executionSuccess) == false)
+        {
+            details += "|executionSuccess=" + safeField(result.executionSuccess);
+        }
+        if (isMissing(result.rowsRead) == false)
+        {
+            details += "|rowsRead=" + safeField(result.rowsRead);
         }
         if (isMissing(result.timingsMs) == false)
         {

@@ -22,11 +22,43 @@
 
             function initialize(root, fetchImplementation, now) {
                 var dom = getDom(root);
-                var state = { status: "idle" };
+                var state = {
+                    status: "idle",
+                    activeOperation: "inspect",
+                    sessionXQuery: null,
+                    outputs: { inspect: null, execute: null }
+                };
                 var transport = createTransport(fetchImplementation, config.inspectEndpoint);
                 var render = createRenderer(dom);
 
-                function inspect() {
+                function refreshTechnical() {
+                    render.technical(
+                        state.outputs,
+                        state.sessionXQuery !== null
+                            && dom.editor.value.trim() !== state.sessionXQuery
+                    );
+                }
+
+                function showOutput(operation) {
+                    var output;
+                    state.activeOperation = operation;
+                    render.selectOperation(operation);
+                    output = state.outputs[operation];
+                    if (!output) {
+                        render.empty(operation);
+                    } else if (output.type === "result") {
+                        render.result(output.viewModel, output.elapsed);
+                    } else {
+                        render.transportError(output.message);
+                    }
+                    refreshTechnical();
+                }
+
+                function showCurrentOutput() {
+                    showOutput(state.activeOperation);
+                }
+
+                function run(operation) {
                     var xquery;
                     var validationMessage;
                     var startedAt;
@@ -39,40 +71,81 @@
                     validationMessage = xQueryValidationMessage(xquery);
                     if (validationMessage) {
                         state.status = "error";
+                        state.activeOperation = operation;
+                        render.selectOperation(operation);
                         render.transportError(validationMessage);
+                        refreshTechnical();
                         dom.editor.focus();
                         return Promise.resolve();
                     }
 
+                    if (state.sessionXQuery !== xquery) {
+                        state.sessionXQuery = xquery;
+                        state.outputs = { inspect: null, execute: null };
+                    }
+
                     state.status = "loading";
-                    render.loading(true);
+                    state.activeOperation = operation;
+                    render.selectOperation(operation);
+                    render.pending(operation);
+                    render.technical(state.outputs, false);
+                    render.loading(true, operation);
                     startedAt = now();
 
-                    return transport.inspect(xquery).then(function (data) {
+                    return transport.request(operation, xquery).then(function (data) {
                         var viewModel = resultViewModel(data);
                         state.status = viewModel.state;
-                        render.result(viewModel, now() - startedAt);
+                        state.outputs[operation] = {
+                            type: "result",
+                            viewModel: viewModel,
+                            elapsed: now() - startedAt
+                        };
+                        if (state.activeOperation === operation) {
+                            showCurrentOutput();
+                        }
                     }, function (error) {
                         state.status = "error";
-                        render.transportError(
-                            error && error.message ? error.message : String(error)
-                        );
+                        state.outputs[operation] = {
+                            type: "error",
+                            message: error && error.message ? error.message : String(error)
+                        };
+                        if (state.activeOperation === operation) {
+                            showCurrentOutput();
+                        }
                     }).then(function () {
-                        render.loading(false);
+                        render.loading(false, operation);
                     }, function (error) {
                         state.status = "error";
-                        render.loading(false);
-                        render.transportError(
-                            error && error.message ? error.message : String(error)
-                        );
+                        render.loading(false, operation);
+                        state.outputs[operation] = {
+                            type: "error",
+                            message: error && error.message ? error.message : String(error)
+                        };
+                        if (state.activeOperation === operation) {
+                            showCurrentOutput();
+                        }
                     });
                 }
 
-                bindEditor(dom, inspect);
+                function inspect() {
+                    return run("inspect");
+                }
+
+                function execute() {
+                    return run("execute");
+                }
+
+                bindEditor(dom, inspect, execute, showOutput, refreshTechnical);
                 dom.editor.value = config.sample;
                 updateLineNumbers(dom);
+                showOutput("inspect");
 
-                return { inspect: inspect, state: state };
+                return {
+                    inspect: inspect,
+                    execute: execute,
+                    showOutput: showOutput,
+                    state: state
+                };
             }
 
             function getDom(root) {
@@ -82,8 +155,14 @@
                     lineNumbers: root.querySelector("#xqi-line-numbers"),
                     inspectButton: root.querySelector("#xqi-inspect-button"),
                     inspectButtonLabel: root.querySelector("#xqi-inspect-button-label"),
+                    executeButton: root.querySelector("#xqi-execute-button"),
+                    executeButtonLabel: root.querySelector("#xqi-execute-button-label"),
+                    inspectTab: root.querySelector("#xqi-inspect-tab"),
+                    executeTab: root.querySelector("#xqi-execute-tab"),
                     resultNode: root.querySelector("#xqi-result"),
                     resultStatusNode: root.querySelector("#xqi-result-status"),
+                    technicalNode: root.querySelector("#xqi-technical"),
+                    staleBadge: root.querySelector("#xqi-stale-badge"),
                     formatButton: root.querySelector("#xqi-format-button"),
                     sampleButton: root.querySelector("#xqi-sample-button"),
                     clearButton: root.querySelector("#xqi-clear-button")
@@ -91,9 +170,10 @@
             }
 
             // Request state and editor
-            function bindEditor(dom, inspect) {
+            function bindEditor(dom, inspect, execute, showOutput, refreshTechnical) {
                 dom.editor.addEventListener("input", function () {
                     updateLineNumbers(dom);
+                    refreshTechnical();
                 });
                 dom.editor.addEventListener("scroll", function () {
                     dom.lineNumbers.scrollTop = dom.editor.scrollTop;
@@ -102,21 +182,32 @@
                     handleEditorKeydown(event, dom, inspect);
                 });
                 dom.inspectButton.addEventListener("click", inspect);
+                dom.executeButton.addEventListener("click", execute);
+                dom.inspectTab.addEventListener("click", function () {
+                    showOutput("inspect");
+                });
+                dom.executeTab.addEventListener("click", function () {
+                    showOutput("execute");
+                });
                 dom.formatButton.addEventListener("click", function () {
                     dom.editor.value = formatXQuery(dom.editor.value);
                     updateLineNumbers(dom);
+                    refreshTechnical();
                     dom.editor.focus();
                 });
                 dom.sampleButton.addEventListener("click", function () {
                     dom.editor.value = config.sample;
                     updateLineNumbers(dom);
+                    refreshTechnical();
                     dom.editor.focus();
                 });
                 dom.clearButton.addEventListener("click", function () {
                     dom.editor.value = "";
                     updateLineNumbers(dom);
+                    refreshTechnical();
                     dom.editor.focus();
                 });
+
             }
 
             function handleEditorKeydown(event, dom, inspect) {
@@ -153,7 +244,7 @@
 
             function xQueryValidationMessage(xquery) {
                 if (!xquery) {
-                    return "Введите XQuery для инспекции.";
+                    return "Введите XQuery.";
                 }
                 if (xQueryCharacterCount(xquery) > config.maxXQueryLength) {
                     return "XQuery превышает ограничение "
@@ -164,7 +255,7 @@
 
             // Transport
             function createTransport(fetchImplementation, endpoint) {
-                function inspect(xquery) {
+                function request(action, xquery) {
                     return fetchImplementation(endpoint, {
                         method: "POST",
                         credentials: "same-origin",
@@ -173,7 +264,8 @@
                             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                             "X-Requested-With": "XMLHttpRequest"
                         },
-                        body: "action=inspect&xquery=" + encodeURIComponent(xquery)
+                        body: "action=" + encodeURIComponent(action)
+                            + "&xquery=" + encodeURIComponent(xquery)
                     }).then(function (response) {
                         return response.text().then(function (responseText) {
                             if (!response.ok) {
@@ -194,7 +286,7 @@
                     });
                 }
 
-                return { inspect: inspect };
+                return { request: request };
             }
 
             // Contract adaptation
@@ -210,9 +302,12 @@
                     };
                 }
 
+                var execute = data.operation === "execute";
                 return {
                     state: data.success ? "result" : "error",
-                    statusText: data.success ? "SQL сформирован" : "Ошибка инспекции",
+                    statusText: execute
+                        ? (data.success ? "Выполнен успешно" : "Выполнен с ошибкой")
+                        : (data.success ? "SQL сформирован" : "Ошибка инспекции"),
                     statusClass: data.success ? "status-success" : "status-error",
                     data: data,
                     cards: resultCards(data)
@@ -242,18 +337,37 @@
                 var cards = [];
                 var contractState = getContractState(data);
                 if (contractState === "unsupported") {
-                    return [
-                        { kind: "contract-error" },
-                        { kind: "raw", expanded: false }
-                    ];
+                    return [{ kind: "contract-error" }];
                 }
                 if (contractState === "legacy") {
                     cards.push({ kind: "legacy-warning" });
                 }
-                if (data.success) {
-                    if (data.sqlOffset === true) {
-                        cards.push({ kind: "sql-offset-warning" });
+                if (data.operation === "execute") {
+                    if (data.executedSql) {
+                        cards.push({ kind: "executed-sql-warning" });
+                        cards.push({ kind: "executed-sql" });
+                        cards.push({ kind: "executed-parameters" });
+                    } else if (data.sql) {
+                        cards.push({ kind: "sql" });
+                        cards.push({ kind: "parameters" });
                     }
+                    if (!data.success && data.error) {
+                        cards.push({ kind: "error" });
+                    }
+                    if (data.executedCommandCaptureError) {
+                        cards.push({ kind: "executed-command-capture-error" });
+                    }
+                    cards.push({ kind: "effective-xquery", expanded: false });
+                    if (data.countSql) {
+                        cards.push({ kind: "execution-count-sql", expanded: false });
+                    }
+                    if (data.cleanupError) {
+                        cards.push({ kind: "cleanup-error" });
+                    }
+                    return cards;
+                }
+                if (data.success) {
+                    cards.push({ kind: "inspection-sql-warning" });
                     cards.push({ kind: "sql" });
                     cards.push({ kind: "parameters" });
                     cards.push({ kind: "effective-xquery", expanded: false });
@@ -266,23 +380,82 @@
                 if (data.cleanupError) {
                     cards.push({ kind: "cleanup-error" });
                 }
-                cards.push({ kind: "diagnostics", expanded: false });
-                cards.push({ kind: "raw", expanded: false });
                 return cards;
             }
 
             // Result rendering
             function createRenderer(dom) {
-                function setLoading(loading) {
-                    var oldSpinner = dom.inspectButton.querySelector(".spinner");
+                function selectOperation(operation) {
+                    var inspectActive = operation === "inspect";
+                    dom.inspectTab.className = "result-tab" + (inspectActive ? " is-active" : "");
+                    dom.executeTab.className = "result-tab" + (inspectActive ? "" : " is-active");
+                    dom.inspectTab.setAttribute("aria-selected", inspectActive ? "true" : "false");
+                    dom.executeTab.setAttribute("aria-selected", inspectActive ? "false" : "true");
+                }
+
+                function renderEmpty(operation) {
+                    var empty = element(dom.document, "div", "empty-state");
+                    dom.resultNode.textContent = "";
+                    dom.resultStatusNode.textContent = "";
+                    empty.appendChild(element(
+                        dom.document,
+                        "div",
+                        "empty-icon",
+                        operation === "execute" ? "2" : "1"
+                    ));
+                    empty.appendChild(element(
+                        dom.document,
+                        "strong",
+                        "",
+                        operation === "execute"
+                            ? "Запрос ещё не выполнялся"
+                            : "Инспекция ещё не запускалась"
+                    ));
+                    empty.appendChild(element(
+                        dom.document,
+                        "span",
+                        "",
+                        operation === "execute"
+                            ? "Нажмите «Выполнить», чтобы запустить запрос и получить наблюдаемый SQL выполнения."
+                            : "Нажмите «Инспектировать», чтобы получить предварительный SQL без выполнения запроса."
+                    ));
+                    dom.resultNode.appendChild(empty);
+                }
+
+                function renderPending(operation) {
+                    dom.resultNode.textContent = "";
+                    setResultStatus(
+                        operation === "execute" ? "Выполнение…" : "Инспекция…",
+                        "status-pending",
+                        undefined,
+                        dom
+                    );
+                    dom.resultNode.appendChild(element(
+                        dom.document,
+                        "div",
+                        "pending-state",
+                        operation === "execute"
+                            ? "Запрос выполняется. Результирующие строки не сохраняются."
+                            : "Формируется предварительный SQL."
+                    ));
+                }
+
+                function setLoading(loading, operation) {
+                    var activeButton = operation === "execute"
+                        ? dom.executeButton : dom.inspectButton;
+                    var activeLabel = operation === "execute"
+                        ? dom.executeButtonLabel : dom.inspectButtonLabel;
+                    var oldSpinner = activeButton.querySelector(".spinner");
                     dom.inspectButton.disabled = loading;
-                    dom.inspectButtonLabel.textContent = loading
-                        ? "Инспекция…" : "Инспектировать";
+                    dom.executeButton.disabled = loading;
+                    activeLabel.textContent = loading
+                        ? (operation === "execute" ? "Выполнение…" : "Инспекция…")
+                        : (operation === "execute" ? "Выполнить" : "Инспектировать");
 
                     if (loading && !oldSpinner) {
                         var spinner = element(dom.document, "span", "spinner");
                         spinner.setAttribute("aria-hidden", "true");
-                        dom.inspectButton.insertBefore(spinner, dom.inspectButtonLabel);
+                        activeButton.insertBefore(spinner, activeLabel);
                     } else if (!loading && oldSpinner) {
                         oldSpinner.remove();
                     }
@@ -311,11 +484,241 @@
                     dom.resultNode.appendChild(stack);
                 }
 
+                function renderTechnical(outputs, stale) {
+                    var hasOutput = outputs.inspect || outputs.execute;
+                    dom.technicalNode.textContent = "";
+                    dom.staleBadge.hidden = !stale;
+                    if (!hasOutput) {
+                        dom.technicalNode.appendChild(element(
+                            dom.document,
+                            "div",
+                            "technical-empty",
+                            "Диагностические данные появятся после инспекции или выполнения."
+                        ));
+                        return;
+                    }
+
+                    dom.technicalNode.appendChild(
+                        technicalDiagnosticsDetails(outputs, stale, dom)
+                    );
+                    dom.technicalNode.appendChild(rawResponsesDetails(outputs, dom));
+                }
+
                 return {
+                    selectOperation: selectOperation,
+                    empty: renderEmpty,
+                    pending: renderPending,
                     loading: setLoading,
                     result: renderResult,
-                    transportError: renderTransportError
+                    transportError: renderTransportError,
+                    technical: renderTechnical
                 };
+            }
+
+            function technicalDiagnosticsDetails(outputs, stale, dom) {
+                var details = dom.document.createElement("details");
+                var sections = technicalDiagnosticSections(outputs, stale);
+                details.appendChild(detailsHeader(
+                    "Диагностика",
+                    function () { return technicalDiagnosticLines(sections).join("\n"); },
+                    dom
+                ));
+                sections.forEach(function (section) {
+                    var sectionNode = element(
+                        dom.document, "section", "diagnostic-section"
+                    );
+                    sectionNode.appendChild(element(
+                        dom.document,
+                        "h4",
+                        "diagnostic-heading",
+                        section.title
+                    ));
+                    sectionNode.appendChild(diagnosticGrid(section.items, dom));
+                    details.appendChild(sectionNode);
+                });
+                return details;
+            }
+
+            function technicalDiagnosticSections(outputs, stale) {
+                var inspectData = outputData(outputs.inspect);
+                var executeData = outputData(outputs.execute);
+                var environment = executeData || inspectData;
+                var sections = [];
+
+                if (stale) {
+                    sections.push({
+                        title: "Состояние",
+                        items: [[
+                            "Актуальность",
+                            "Данные относятся к предыдущей версии XQuery"
+                        ]]
+                    });
+                }
+                if (environment) {
+                    sections.push({
+                        title: "Среда",
+                        items: environmentDiagnosticItems(executeData, inspectData)
+                    });
+                }
+                sections.push(operationDiagnosticSection("Инспекция", outputs.inspect, false));
+                sections.push(operationDiagnosticSection("Выполнение", outputs.execute, true));
+                return sections;
+            }
+
+            function environmentDiagnosticItems(preferred, fallback) {
+                var fields = [
+                    ["Версия контракта", "contractVersion"],
+                    ["Версия инспектора", "inspectorVersion"],
+                    ["Тип провайдера", "providerType"],
+                    ["Сборка провайдера", "providerAssemblyVersion"],
+                    ["Тип коллекции", "collectionType"],
+                    ["Сборка коллекции", "collectionAssemblyVersion"],
+                    ["Внутренняя коллекция", "innerCollectionType"],
+                    ["Сборка внутренней коллекции", "innerCollectionAssemblyVersion"],
+                    ["Runtime-тип Query", "queryRuntimeType"],
+                    ["Сборка Query", "queryAssemblyVersion"],
+                    ["Reflection-цепочка", "reflectionPath"],
+                    ["Значение QueryType", "queryType"]
+                ];
+                return fields.map(function (field) {
+                    return [
+                        field[0],
+                        diagnosticValue(preferred, fallback, field[1])
+                    ];
+                });
+            }
+
+            function diagnosticValue(preferred, fallback, name) {
+                if (preferred
+                    && preferred[name] !== null
+                    && preferred[name] !== undefined) {
+                    return preferred[name];
+                }
+                return fallback ? fallback[name] : null;
+            }
+
+            function operationDiagnosticSection(title, output, execute) {
+                var data = outputData(output);
+                var items;
+                if (!output) {
+                    return { title: title, items: [["Статус", "Не запускалось"]] };
+                }
+                if (!data) {
+                    return {
+                        title: title,
+                        items: [
+                            ["Статус", "Ответ сервера не получен"],
+                            ["Ошибка транспорта", output.message]
+                        ]
+                    };
+                }
+
+                items = [
+                    ["Статус", data.success
+                        ? (execute ? "Выполнено успешно" : "SQL сформирован")
+                        : "Ошибка"],
+                    ["Этап ошибки", data.failureStage],
+                    ["Тип ошибки", data.errorType],
+                    ["Ошибка", data.error],
+                    ["Ошибка освобождения", data.cleanupError]
+                ];
+                if (execute) {
+                    items = items.concat([
+                        ["Выполнение начато", data.executionAttempted],
+                        ["Выполнение успешно", data.executionSuccess],
+                        ["Прочитано строк", data.rowsRead],
+                        ["SQL после выполнения", data.executedSql ? "Получен" : "Не получен"],
+                        ["Ошибка получения SQL", data.executedCommandCaptureError]
+                    ]);
+                } else {
+                    items = items.concat([
+                        ["SqlOffset", data.sqlOffset],
+                        ["Размер страницы", data.pageSize]
+                    ]);
+                }
+                if (data.timingsMs) {
+                    items = items.concat([
+                        ["Весь вызов", millisecondsText(data.timingsMs.total)],
+                        ["Подготовка XQuery", millisecondsText(data.timingsMs.preprocessing)],
+                        ["Трансляция", millisecondsText(data.timingsMs.translation)],
+                        ["Извлечение команды", millisecondsText(data.timingsMs.extraction)]
+                    ]);
+                    if (execute) {
+                        items.push([
+                            "Выполнение",
+                            millisecondsText(data.timingsMs.execution)
+                        ]);
+                    }
+                    items.push([
+                        "Освобождение коллекции",
+                        millisecondsText(data.timingsMs.cleanup)
+                    ]);
+                }
+                return { title: title, items: items };
+            }
+
+            function outputData(output) {
+                return output && output.type === "result"
+                    ? output.viewModel.data
+                    : null;
+            }
+
+            function diagnosticGrid(items, dom) {
+                var grid = element(dom.document, "div", "meta-grid");
+                items.forEach(function (item) {
+                    var row = element(dom.document, "div", "meta-row");
+                    row.appendChild(element(dom.document, "span", "", item[0]));
+                    row.appendChild(element(
+                        dom.document, "code", "", valueText(item[1])
+                    ));
+                    grid.appendChild(row);
+                });
+                return grid;
+            }
+
+            function technicalDiagnosticLines(sections) {
+                var lines = [];
+                sections.forEach(function (section) {
+                    lines.push("[" + section.title + "]");
+                    section.items.forEach(function (item) {
+                        lines.push(item[0] + ": " + valueText(item[1]));
+                    });
+                    lines.push("");
+                });
+                return lines;
+            }
+
+            function rawResponsesDetails(outputs, dom) {
+                var details = dom.document.createElement("details");
+                var body = element(dom.document, "div", "json-responses");
+                details.appendChild(plainDetailsHeader("Ответы сервера (JSON)", dom));
+                appendRawResponse(body, "Инспекция", outputs.inspect, dom);
+                appendRawResponse(body, "Выполнение", outputs.execute, dom);
+                details.appendChild(body);
+                return details;
+            }
+
+            function appendRawResponse(parent, title, output, dom) {
+                var data = outputData(output);
+                if (data) {
+                    var json = JSON.stringify(data, null, 2);
+                    parent.appendChild(codeCard(
+                        "Ответ: " + title,
+                        json,
+                        json,
+                        undefined,
+                        dom
+                    ));
+                } else {
+                    parent.appendChild(element(
+                        dom.document,
+                        "div",
+                        "json-response-empty",
+                        output
+                            ? title + ": исходный ответ не получен. " + output.message
+                            : title + ": ещё не запускалось."
+                    ));
+                }
             }
 
             function renderResultCard(card, data, dom) {
@@ -336,17 +739,42 @@
                         "Ответ DLL не содержит contractVersion. Данные показаны в режиме совместимости; обновите DLL для полной диагностики."
                     );
                 }
-                if (card.kind === "sql-offset-warning") {
+                if (card.kind === "inspection-sql-warning") {
+                    return element(
+                        dom.document,
+                        "div",
+                        "message message-compact",
+                        inspectionSqlWarningText(data)
+                    );
+                }
+                if (card.kind === "executed-sql-warning") {
                     return element(
                         dom.document,
                         "div",
                         "message",
-                        sqlOffsetWarningText(data)
+                        "SQL ниже повторно прочитан из Query.command после выполнения. "
+                            + "Это наблюдаемый снимок UniBridge, а не трассировка на стороне СУБД."
                     );
+                }
+                if (card.kind === "executed-sql") {
+                    return codeCard(
+                        "SQL при выполнении",
+                        formatSql(data.executedSql || ""),
+                        data.executedSql || "",
+                        "primary-sql",
+                        dom
+                    );
+                }
+                if (card.kind === "executed-parameters") {
+                    return parametersCard(data.executedParameters || [], dom);
                 }
                 if (card.kind === "sql") {
                     return codeCard(
-                        "SQL", formatSql(data.sql || ""), data.sql || "", "primary-sql", dom
+                        "Предварительный SQL",
+                        formatSql(data.sql || ""),
+                        data.sql || "",
+                        "primary-sql",
+                        dom
                     );
                 }
                 if (card.kind === "parameters") {
@@ -373,16 +801,34 @@
                         dom
                     );
                 }
+                if (card.kind === "execution-count-sql") {
+                    return collapsibleCodeCard(
+                        "Count SQL · отдельно не выполнялся",
+                        formatSql(data.countSql),
+                        data.countSql,
+                        card.expanded,
+                        undefined,
+                        dom
+                    );
+                }
                 if (card.kind === "error") {
                     return errorCard(data.errorType, data.error, dom);
                 }
                 if (card.kind === "cleanup-error") {
                     return errorCard("Ошибка освобождения коллекции", data.cleanupError, dom);
                 }
-                if (card.kind === "diagnostics") {
-                    return diagnosticsDetails(data, dom);
+                if (card.kind === "executed-command-capture-error") {
+                    return errorCard(
+                        "Не удалось получить SQL после выполнения",
+                        data.executedCommandCaptureError,
+                        dom
+                    );
                 }
-                return rawDetails(data, dom);
+                return errorCard(
+                    "Неизвестный блок результата",
+                    card.kind || "Не указан тип блока.",
+                    dom
+                );
             }
 
             function setResultStatus(text, className, elapsed, dom) {
@@ -445,6 +891,12 @@
                 });
                 header.appendChild(element(dom.document, "span", "card-title", title));
                 header.appendChild(button);
+                return header;
+            }
+
+            function plainDetailsHeader(title, dom) {
+                var header = element(dom.document, "summary", "details-header");
+                header.appendChild(element(dom.document, "span", "card-title", title));
                 return header;
             }
 
@@ -552,73 +1004,16 @@
                 return box;
             }
 
-            function diagnosticsDetails(data, dom) {
-                var details = dom.document.createElement("details");
-                var grid = element(dom.document, "div", "meta-grid");
-                var items = diagnosticItems(data);
-
-                details.appendChild(detailsHeader(
-                    "Диагностика инспектора",
-                    function () { return diagnosticLines(data).join("\n"); },
-                    dom
-                ));
-                items.forEach(function (item) {
-                    var row = element(dom.document, "div", "meta-row");
-                    row.appendChild(element(dom.document, "span", "", item[0]));
-                    row.appendChild(element(
-                        dom.document, "code", "", valueText(item[1])
-                    ));
-                    grid.appendChild(row);
-                });
-                details.appendChild(grid);
-
-                return details;
-            }
-
-            function diagnosticItems(data) {
-                var items = [
-                    ["Версия контракта", data.contractVersion],
-                    ["Версия инспектора", data.inspectorVersion],
-                    ["Этап ошибки", data.failureStage],
-                    ["Reflection-цепочка", data.reflectionPath],
-                    ["Тип провайдера", data.providerType],
-                    ["Сборка провайдера", data.providerAssemblyVersion],
-                    ["Тип коллекции", data.collectionType],
-                    ["Сборка коллекции", data.collectionAssemblyVersion],
-                    ["Внутренняя коллекция", data.innerCollectionType],
-                    ["Сборка внутренней коллекции", data.innerCollectionAssemblyVersion],
-                    ["Runtime-тип Query", data.queryRuntimeType],
-                    ["Сборка Query", data.queryAssemblyVersion],
-                    ["Значение QueryType", data.queryType],
-                    ["SqlOffset", data.sqlOffset],
-                    ["Размер страницы", data.pageSize]
-                ];
-
-                if (data.timingsMs) {
-                    items = items.concat([
-                        ["Весь вызов", millisecondsText(data.timingsMs.total)],
-                        ["Подготовка XQuery", millisecondsText(data.timingsMs.preprocessing)],
-                        ["Трансляция", millisecondsText(data.timingsMs.translation)],
-                        ["Извлечение команды", millisecondsText(data.timingsMs.extraction)],
-                        ["Освобождение коллекции", millisecondsText(data.timingsMs.cleanup)]
-                    ]);
-                }
-                return items;
-            }
-
-            function sqlOffsetWarningText(data) {
+            function inspectionSqlWarningText(data) {
                 var pageSize = typeof data.pageSize === "number" && data.pageSize > 0
-                    ? " Размер страницы — " + data.pageSize + " записей."
-                    : " Обычно размер страницы — 400 записей.";
-                return "Включён SqlOffset. При чтении коллекции UniBridge может "
-                    + "добавить пагинацию и сортировку, поэтому реально выполняемый "
-                    + "SQL может отличаться от показанного." + pageSize;
-            }
-
-            function diagnosticLines(data) {
-                return diagnosticItems(data).map(function (item) {
-                    return item[0] + ": " + valueText(item[1]);
-                });
+                    ? data.pageSize
+                    : 400;
+                var text = "Предварительный SQL — запрос ещё не выполнялся.";
+                if (data.sqlOffset === true) {
+                    text += " UniBridge может добавить сортировку и пагинацию"
+                        + " (страница " + pageSize + " записей).";
+                }
+                return text + " Наблюдаемую команду смотрите во вкладке «Выполнение».";
             }
 
             function millisecondsText(value) {
@@ -626,13 +1021,6 @@
                     return "—";
                 }
                 return value.toFixed(3) + " ms";
-            }
-
-            function rawDetails(data, dom) {
-                var json = JSON.stringify(data, null, 2);
-                return collapsibleCodeCard(
-                    "Исходный JSON", json, json, false, undefined, dom
-                );
             }
 
             function valueText(value) {

@@ -20,6 +20,7 @@ RunScenario(
 RunScenario(
     "reflection-collection-query-command",
     () => VerifyDirectCollectionPath(inspector));
+RunScenario("query-execution", () => VerifyExecution(inspector));
 RunScenario("failure-stages", () => VerifyFailureStages(inspector));
 RunScenario("provider-parameter-types", () => VerifyProviderParameterTypes(inspector));
 RunScenario(
@@ -64,7 +65,7 @@ static void VerifySuccessfulInspection(
     Assert(root.GetProperty("contractVersion").GetInt32() == 1, "Unexpected contract version.");
     Assert(
         root.GetProperty("inspectorVersion").GetString()?.StartsWith(
-            "1.3.1",
+            "1.4.2",
             StringComparison.Ordinal) == true,
         "Unexpected inspector version.");
     Assert(
@@ -199,6 +200,49 @@ static void VerifyDirectCollectionPath(Inspector inspector)
     Assert(
         root.GetProperty("innerCollectionAssemblyVersion").ValueKind == JsonValueKind.Null,
         "Direct collection path must not report an inner collection version.");
+}
+
+static void VerifyExecution(Inspector inspector)
+{
+    ExecutableCollection successfulCollection = new(throwOnMoveNext: false);
+    JsonElement successful = ParseResult(inspector.Execute(
+        new ScenarioProvider(_ => successfulCollection),
+        "for $elem in collaborators return $elem/id"));
+
+    Assert(successful.GetProperty("success").GetBoolean(), "Execute() returned an error.");
+    Assert(successful.GetProperty("operation").GetString() == "execute", "Execution operation was not reported.");
+    Assert(successful.GetProperty("executionAttempted").GetBoolean(), "Execution attempt was not reported.");
+    Assert(successful.GetProperty("executionSuccess").GetBoolean(), "Successful execution was not reported.");
+    Assert(successful.GetProperty("rowsRead").GetInt64() == 2L, "The full collection was not enumerated.");
+    Assert(
+        successful.GetProperty("executedSql").GetString() == "select id from collaborators order by id",
+        "The command observed during execution was not captured.");
+    Assert(successfulCollection.Terminated, "Executed collection was not terminated.");
+    AssertTiming(successful, "execution", expected: true);
+
+    EnumerableExecutableCollection enumerableCollection = new();
+    JsonElement enumerable = ParseResult(inspector.Execute(
+        new ScenarioProvider(_ => enumerableCollection),
+        "for $elem in collaborators return $elem/id"));
+    Assert(enumerable.GetProperty("success").GetBoolean(), "IEnumerable execution failed.");
+    Assert(enumerable.GetProperty("rowsRead").GetInt64() == 2L, "IEnumerable was not fully read.");
+    Assert(enumerableCollection.Terminated, "IEnumerable collection was not terminated.");
+
+    ExecutableCollection failingCollection = new(throwOnMoveNext: true);
+    JsonElement failed = ParseResult(inspector.Execute(
+        new ScenarioProvider(_ => failingCollection),
+        "for $elem in collaborators return $elem/id"));
+
+    Assert(!failed.GetProperty("success").GetBoolean(), "Execution failure was reported as success.");
+    Assert(!failed.GetProperty("executionSuccess").GetBoolean(), "Execution failure flag is incorrect.");
+    Assert(failed.GetProperty("failureStage").GetString() == "execute-query", "Execution failure stage is incorrect.");
+    Assert(
+        failed.GetProperty("error").GetString()?.Contains("Database execution failed", StringComparison.Ordinal) == true,
+        "Execution error text was not preserved.");
+    Assert(
+        failed.GetProperty("executedSql").GetString() == "select id from collaborators order by id",
+        "Runtime command was lost after execution failure.");
+    Assert(failingCollection.Terminated, "Failed collection was not terminated.");
 }
 
 static void VerifyFailureStages(Inspector inspector)
@@ -431,6 +475,7 @@ static void VerifySerializationFallback()
     Assert(!root.GetProperty("success").GetBoolean(), "Serialization fallback reported success.");
     Assert(root.GetProperty("contractVersion").GetInt32() == 1, "Fallback contract version changed.");
     AssertVersion(root, "inspectorVersion");
+    Assert(root.GetProperty("operation").GetString() == "inspect", "Fallback operation is missing.");
     Assert(
         root.GetProperty("failureStage").GetString() == "serialize-result",
         "Serialization fallback stage is missing.");
@@ -438,7 +483,7 @@ static void VerifySerializationFallback()
     Assert(!string.IsNullOrWhiteSpace(root.GetProperty("error").GetString()), "Fallback error is missing.");
     Assert(!root.TryGetProperty("xQuery", out _), "Fallback exposed the source XQuery.");
     Assert(!root.TryGetProperty("parameters", out _), "Fallback exposed parameter values.");
-    Assert(root.EnumerateObject().Count() == 6, "Serialization fallback is not minimal.");
+    Assert(root.EnumerateObject().Count() == 7, "Serialization fallback is not minimal.");
 }
 
 static void AssertLimitConstants()
@@ -1106,6 +1151,84 @@ sealed class DirectCollection
         {
             throw new InvalidOperationException("Cleanup failed.");
         }
+    }
+}
+
+sealed class ExecutableCollection
+{
+    private readonly bool throwOnMoveNext;
+    private int position;
+
+    public ExecutableCollection(bool throwOnMoveNext)
+    {
+        this.throwOnMoveNext = throwOnMoveNext;
+        Query = new FakeQuery
+        {
+            QueryType = "XQuery",
+            command = new FakeCommand
+            {
+                CommandText = "select id from collaborators",
+                Parameters = new List<FakeParameter>()
+            }
+        };
+    }
+
+    public FakeQuery Query { get; }
+
+    public bool Terminated { get; private set; }
+
+    public bool GetFirst()
+    {
+        Query.command!.CommandText = "select id from collaborators order by id";
+        if (throwOnMoveNext)
+        {
+            throw new InvalidOperationException("Database execution failed.");
+        }
+
+        position = 0;
+        return true;
+    }
+
+    public bool GetNext()
+    {
+        position++;
+        return position < 2;
+    }
+
+    public void Terminate()
+    {
+        Terminated = true;
+    }
+}
+
+sealed class EnumerableExecutableCollection : IEnumerable<object>
+{
+    public FakeQuery Query { get; } = new()
+    {
+        QueryType = "XQuery",
+        command = new FakeCommand
+        {
+            CommandText = "select id from collaborators",
+            Parameters = new List<FakeParameter>()
+        }
+    };
+
+    public bool Terminated { get; private set; }
+
+    public IEnumerator<object> GetEnumerator()
+    {
+        yield return new object();
+        yield return new object();
+    }
+
+    IEnumerator IEnumerable.GetEnumerator()
+    {
+        return GetEnumerator();
+    }
+
+    public void Terminate()
+    {
+        Terminated = true;
     }
 }
 

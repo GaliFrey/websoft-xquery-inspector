@@ -95,7 +95,35 @@ public sealed class Inspector
         InspectionResult result = InspectCore(
             provider,
             xquery,
-            useBasicHierarchyPreprocessing);
+            useBasicHierarchyPreprocessing,
+            execute: false);
+
+        return SerializeResult(result);
+    }
+
+    /// <summary>
+    /// Inspects XQuery, fully enumerates the returned collection without
+    /// serializing its rows, and reports whether execution completed.
+    /// </summary>
+    public string Execute(object? provider, string? xquery)
+    {
+        return Execute(provider, xquery, useBasicHierarchyPreprocessing: true);
+    }
+
+    /// <summary>
+    /// Executes XQuery and conditionally applies the legacy hierarchy
+    /// preprocessing used by tools.xquery() for UNI_CAP_BASIC providers.
+    /// </summary>
+    public string Execute(
+        object? provider,
+        string? xquery,
+        bool useBasicHierarchyPreprocessing)
+    {
+        InspectionResult result = InspectCore(
+            provider,
+            xquery,
+            useBasicHierarchyPreprocessing,
+            execute: true);
 
         return SerializeResult(result);
     }
@@ -114,6 +142,9 @@ public sealed class Inspector
                 {
                     ContractVersion = ContractVersion,
                     InspectorVersion = GetInspectorVersion(),
+                    Operation = result is InspectionResult inspectionResult
+                        ? inspectionResult.Operation
+                        : "inspect",
                     ErrorType = actual.GetType().FullName,
                     Error = actual.Message
                 },
@@ -124,17 +155,21 @@ public sealed class Inspector
     private static InspectionResult InspectCore(
         object? providerValue,
         string? xquery,
-        bool useBasicHierarchyPreprocessing)
+        bool useBasicHierarchyPreprocessing,
+        bool execute)
     {
         long totalStartedAt = Stopwatch.GetTimestamp();
         InspectionResult result = new()
         {
             ContractVersion = ContractVersion,
             InspectorVersion = GetInspectorVersion(),
+            Operation = execute ? "execute" : "inspect",
             XQuery = xquery
         };
 
         object? collection = null;
+        object? queryOwner = null;
+        object? query = null;
         string failureStage = "validate-input";
 
         try
@@ -201,8 +236,8 @@ public sealed class Inspector
             try
             {
                 failureStage = "resolve-query";
-                object queryOwner = collection;
-                object? query = GetMemberValue(queryOwner, "Query");
+                queryOwner = collection;
+                query = GetMemberValue(queryOwner, "Query");
                 if (query is not null)
                 {
                     result.ReflectionPath = "collection.Query.command";
@@ -268,6 +303,23 @@ public sealed class Inspector
                 result.TimingsMs.Extraction = GetElapsedMilliseconds(extractionStartedAt);
             }
 
+            if (execute)
+            {
+                result.ExecutionAttempted = true;
+                failureStage = "execute-query";
+                long executionStartedAt = Stopwatch.GetTimestamp();
+                try
+                {
+                    result.RowsRead = EnumerateCollection(collection, queryOwner);
+                    result.ExecutionSuccess = true;
+                }
+                finally
+                {
+                    result.TimingsMs.Execution = GetElapsedMilliseconds(executionStartedAt);
+                    CaptureExecutedCommand(result, queryOwner, query);
+                }
+            }
+
             result.Success = true;
             failureStage = string.Empty;
         }
@@ -275,6 +327,10 @@ public sealed class Inspector
         {
             Exception actual = UnwrapException(exception);
             result.Success = false;
+            if (result.ExecutionAttempted && result.ExecutionSuccess is null)
+            {
+                result.ExecutionSuccess = false;
+            }
             result.FailureStage = failureStage;
             result.ErrorType = actual.GetType().FullName;
             result.Error = actual.Message;
@@ -286,12 +342,9 @@ public sealed class Inspector
                 long cleanupStartedAt = Stopwatch.GetTimestamp();
                 try
                 {
-                    MethodInfo? terminate = collection.GetType().GetMethod(
-                        "Terminate",
-                        MemberFlags,
-                        binder: null,
-                        types: Type.EmptyTypes,
-                        modifiers: null);
+                    MethodInfo? terminate = FindParameterlessMethod(
+                        collection.GetType(),
+                        "Terminate");
 
                     if (terminate is null)
                     {
@@ -320,6 +373,101 @@ public sealed class Inspector
         }
 
         return result;
+    }
+
+    private static long EnumerateCollection(object collection, object? queryOwner)
+    {
+        object cursorSource = queryOwner ?? collection;
+        MethodInfo? getFirst = FindParameterlessMethod(cursorSource.GetType(), "GetFirst");
+        MethodInfo? getNext = FindParameterlessMethod(cursorSource.GetType(), "GetNext");
+        if ((getFirst is null) != (getNext is null))
+        {
+            string missingMethod = getFirst is null ? "GetFirst" : "GetNext";
+            throw new MissingMethodException(cursorSource.GetType().FullName, missingMethod);
+        }
+
+        if (getFirst is not null && getNext is not null)
+        {
+            long count = 0;
+            bool hasCurrent = Convert.ToBoolean(
+                getFirst.Invoke(cursorSource, null),
+                CultureInfo.InvariantCulture);
+            while (hasCurrent)
+            {
+                checked
+                {
+                    count++;
+                }
+
+                hasCurrent = Convert.ToBoolean(
+                    getNext.Invoke(cursorSource, null),
+                    CultureInfo.InvariantCulture);
+            }
+
+            return count;
+        }
+
+        IEnumerable enumerable = collection as IEnumerable
+            ?? cursorSource as IEnumerable
+            ?? throw new InvalidOperationException(
+                "XQuery collection must expose GetFirst()/GetNext() or implement IEnumerable.");
+        IEnumerator enumerator = enumerable.GetEnumerator();
+        try
+        {
+            long count = 0;
+            while (enumerator.MoveNext())
+            {
+                _ = enumerator.Current;
+                checked
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+        finally
+        {
+            (enumerator as IDisposable)?.Dispose();
+        }
+    }
+
+    private static MethodInfo? FindParameterlessMethod(Type type, string name)
+    {
+        return type.GetMethod(
+            name,
+            MemberFlags,
+            binder: null,
+            types: Type.EmptyTypes,
+            modifiers: null);
+    }
+
+    private static void CaptureExecutedCommand(
+        InspectionResult result,
+        object? queryOwner,
+        object? originalQuery)
+    {
+        try
+        {
+            object? currentQuery = GetMemberValue(queryOwner, "Query") ?? originalQuery;
+            object? currentCommand = GetMemberValue(currentQuery, "command");
+            if (currentCommand is null)
+            {
+                throw new MissingMemberException(currentQuery?.GetType().FullName, "command");
+            }
+
+            result.ExecutedSql = Convert.ToString(
+                GetMemberValue(currentCommand, "CommandText"),
+                CultureInfo.InvariantCulture);
+            result.ExecutedParameters = ReadParameters(
+                GetMemberValue(currentCommand, "Parameters"));
+        }
+        catch (Exception exception)
+        {
+            Exception actual = UnwrapException(exception);
+            result.ExecutedCommandCaptureError =
+                actual.GetType().FullName + ": " + actual.Message;
+        }
     }
 
     private static string PreprocessXQuery(
@@ -809,6 +957,8 @@ internal sealed class InspectionResult
 
     public string InspectorVersion { get; set; } = string.Empty;
 
+    public string Operation { get; set; } = "inspect";
+
     public string? ProviderType { get; set; }
 
     public string? ProviderAssemblyVersion { get; set; }
@@ -841,6 +991,18 @@ internal sealed class InspectionResult
 
     public List<ParameterResult> Parameters { get; set; } = new();
 
+    public bool ExecutionAttempted { get; set; }
+
+    public bool? ExecutionSuccess { get; set; }
+
+    public long? RowsRead { get; set; }
+
+    public string? ExecutedSql { get; set; }
+
+    public List<ParameterResult> ExecutedParameters { get; set; } = new();
+
+    public string? ExecutedCommandCaptureError { get; set; }
+
     public string? ReflectionPath { get; set; }
 
     public string? FailureStage { get; set; }
@@ -862,6 +1024,8 @@ internal sealed class SerializationFailureResult
 
     public string InspectorVersion { get; set; } = string.Empty;
 
+    public string Operation { get; set; } = "inspect";
+
     public string FailureStage { get; set; } = "serialize-result";
 
     public string? ErrorType { get; set; }
@@ -878,6 +1042,8 @@ internal sealed class InspectionTimings
     public double? Translation { get; set; }
 
     public double? Extraction { get; set; }
+
+    public double? Execution { get; set; }
 
     public double? Cleanup { get; set; }
 }

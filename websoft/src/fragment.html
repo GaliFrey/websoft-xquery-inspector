@@ -20,10 +20,26 @@
                 </div>
 
                 <div class="editor-footer">
+                    <div class="execution-guide">
+                        <div class="guide-step">
+                            <span class="guide-number">1</span>
+                            <span><strong>Инспекция</strong> показывает предварительный SQL без обращения к БД.</span>
+                        </div>
+                        <span class="guide-arrow" aria-hidden="true">→</span>
+                        <div class="guide-step">
+                            <span class="guide-number">2</span>
+                            <span><strong>Выполнение</strong> запускает запрос и показывает SQL, наблюдаемый во время выполнения.</span>
+                        </div>
+                    </div>
                     <div class="shortcut"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> — инспектировать</div>
-                    <button class="button button-primary" id="xqi-inspect-button" type="button">
-                        <span id="xqi-inspect-button-label">Инспектировать</span>
-                    </button>
+                    <div class="execution-actions">
+                        <button class="button button-action button-inspect" id="xqi-inspect-button" type="button">
+                            <span id="xqi-inspect-button-label">Инспектировать</span>
+                        </button>
+                        <button class="button button-action button-execute" id="xqi-execute-button" type="button">
+                            <span id="xqi-execute-button-label">Выполнить</span>
+                        </button>
+                    </div>
                 </div>
             </section>
 
@@ -31,17 +47,32 @@
                 <div class="panel-header">
                     <div>
                         <h2 class="panel-title" id="xqi-result-title">Результат</h2>
-                        <div class="panel-kicker">SQL, параметры и преобразованный XQuery</div>
+                        <div class="panel-kicker">Предварительный и фактически наблюдаемый SQL хранятся отдельно</div>
                     </div>
-                    <div class="result-header-meta" id="xqi-result-status" aria-live="polite"></div>
+                    <div class="result-controls">
+                        <div class="result-tabs" role="tablist" aria-label="Вид результата">
+                            <button class="result-tab is-active" id="xqi-inspect-tab" type="button" role="tab" aria-selected="true">
+                                Инспекция
+                            </button>
+                            <button class="result-tab" id="xqi-execute-tab" type="button" role="tab" aria-selected="false">
+                                Выполнение
+                            </button>
+                        </div>
+                        <div class="result-header-meta" id="xqi-result-status" aria-live="polite"></div>
+                    </div>
                 </div>
                 <div class="result-body" id="xqi-result" aria-live="polite">
-                    <div class="empty-state">
-                        <div class="empty-icon" aria-hidden="true">→</div>
-                        <strong>Результат появится здесь</strong>
-                        <span>Введите XQuery и запустите инспекцию. Коллекция не будет перечислена.</span>
-                    </div>
                 </div>
+                <section class="technical-data" aria-labelledby="xqi-technical-title">
+                    <div class="technical-header">
+                        <div>
+                            <h3 class="technical-title" id="xqi-technical-title">Технические данные</h3>
+                            <div class="panel-kicker">Общая диагностика и исходные ответы сервера</div>
+                        </div>
+                        <span class="stale-badge" id="xqi-stale-badge" hidden>Предыдущий запрос</span>
+                    </div>
+                    <div class="technical-body" id="xqi-technical"></div>
+                </section>
             </section>
         </main>
     </div>

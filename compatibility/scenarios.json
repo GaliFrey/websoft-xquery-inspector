@@ -8,6 +8,12 @@
       "xqueryFile": "scenarios/basic-parameter.xq"
     },
     {
+      "id": "basic-execution",
+      "kind": "execution",
+      "expectedParameterValue": "6148914691236517121",
+      "xqueryFile": "scenarios/basic-parameter.xq"
+    },
+    {
       "id": "hierarchy-child",
       "kind": "hierarchy",
       "xqueryFile": "scenarios/hierarchy-child.xq"
@@ -22,6 +28,17 @@
       "kind": "invalid",
       "expectedFailureStage": "preprocess-xquery",
       "xqueryFile": "scenarios/invalid-query.xq"
+    },
+    {
+      "id": "invalid-provider-query",
+      "kind": "invalid",
+      "expectedFailureStage": "invoke-xquery",
+      "xqueryFile": "scenarios/invalid-provider-query.xq"
+    },
+    {
+      "id": "max-length-xquery",
+      "kind": "boundary",
+      "generated": "max-xquery"
     },
     {
       "id": "oversized-xquery",

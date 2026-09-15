@@ -120,21 +120,42 @@
             outline-offset: 2px;
         }
 
-        .xqi-root .button-primary {
+        .xqi-root .button-action {
             display: inline-flex;
+            width: 142px;
             min-height: 42px;
             align-items: center;
             justify-content: center;
             gap: 9px;
             padding: 10px 17px;
-            border-color: var(--accent-strong);
-            background: var(--accent);
             color: #ffffff;
             font-size: 13px;
         }
 
-        .xqi-root .button-primary:hover {
+        .xqi-root .button-inspect {
+            border-color: var(--accent-strong);
+            background: var(--accent);
+        }
+
+        .xqi-root .button-inspect:hover {
             background: var(--accent-strong);
+        }
+
+        .xqi-root .execution-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .xqi-root .button-execute {
+            border-color: #96323c;
+            background: var(--danger);
+            color: #ffffff;
+        }
+
+        .xqi-root .button-execute:hover {
+            border-color: #812a33;
+            background: #96323c;
         }
 
         .xqi-root .button:disabled {
@@ -195,13 +216,55 @@
         }
 
         .xqi-root .editor-footer {
-            display: flex;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
             align-items: center;
-            justify-content: space-between;
-            gap: 16px;
+            gap: 12px 16px;
             padding: 13px 16px;
             border-top: 1px solid var(--line);
             background: var(--panel-raised);
+        }
+
+        .xqi-root .execution-guide {
+            display: grid;
+            grid-column: 1 / -1;
+            grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            background: #ffffff;
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.45;
+        }
+
+        .xqi-root .guide-step {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+        }
+
+        .xqi-root .guide-step strong {
+            color: var(--text);
+        }
+
+        .xqi-root .guide-number {
+            display: inline-grid;
+            width: 24px;
+            height: 24px;
+            flex: 0 0 24px;
+            place-items: center;
+            border-radius: 50%;
+            background: var(--panel-soft);
+            color: var(--accent-strong);
+            font-weight: 800;
+        }
+
+        .xqi-root .guide-arrow {
+            color: var(--line-strong);
+            font-size: 18px;
         }
 
         .xqi-root .shortcut {
@@ -258,6 +321,99 @@
             line-height: 1.55;
         }
 
+        .xqi-root .pending-state {
+            display: grid;
+            min-height: 510px;
+            place-content: center;
+            padding: 30px;
+            color: var(--muted);
+            text-align: center;
+            font-size: 12px;
+        }
+
+        .xqi-root .technical-data {
+            border-top: 1px solid var(--line);
+            background: var(--panel-raised);
+        }
+
+        .xqi-root .technical-header {
+            display: flex;
+            min-height: 56px;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 14px;
+        }
+
+        .xqi-root .technical-title {
+            margin: 0;
+            font-size: 13px;
+            font-weight: 750;
+        }
+
+        .xqi-root .technical-body {
+            display: grid;
+            gap: 10px;
+            padding: 0 12px 12px;
+        }
+
+        .xqi-root .technical-empty {
+            padding: 12px 13px;
+            border: 1px dashed var(--line-strong);
+            border-radius: 10px;
+            background: #ffffff;
+            color: var(--muted);
+            font-size: 11px;
+        }
+
+        .xqi-root .stale-badge {
+            flex: 0 0 auto;
+            padding: 5px 8px;
+            border: 1px solid rgba(148, 104, 16, .3);
+            border-radius: 999px;
+            background: #fff9e9;
+            color: #735619;
+            font-size: 10px;
+            font-weight: 750;
+        }
+
+        .xqi-root .stale-badge[hidden] {
+            display: none;
+        }
+
+        .xqi-root .diagnostic-section {
+            padding: 0 13px 13px;
+        }
+
+        .xqi-root .diagnostic-section + .diagnostic-section {
+            padding-top: 12px;
+            border-top: 1px solid var(--line);
+        }
+
+        .xqi-root .diagnostic-heading {
+            margin: 0 0 9px;
+            color: var(--text);
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: .04em;
+            text-transform: uppercase;
+        }
+
+        .xqi-root .json-responses {
+            display: grid;
+            gap: 10px;
+            padding: 0 10px 10px;
+        }
+
+        .xqi-root .json-response-empty {
+            padding: 13px;
+            border: 1px dashed var(--line);
+            border-radius: 9px;
+            background: #ffffff;
+            color: var(--muted);
+            font-size: 11px;
+        }
+
         .xqi-root .result-stack {
             display: grid;
             gap: 13px;
@@ -269,6 +425,43 @@
             justify-content: flex-end;
             gap: 9px;
             min-width: 0;
+        }
+
+        .xqi-root .result-controls {
+            display: flex;
+            min-width: 0;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .xqi-root .result-tabs {
+            display: inline-flex;
+            padding: 3px;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            background: var(--panel-raised);
+        }
+
+        .xqi-root .result-tab {
+            min-height: 30px;
+            padding: 5px 10px;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .xqi-root .result-tab:hover {
+            color: var(--text);
+        }
+
+        .xqi-root .result-tab.is-active {
+            background: #ffffff;
+            color: var(--text);
+            box-shadow: 0 1px 4px rgba(37, 49, 46, .12);
         }
 
         .xqi-root .status {
@@ -299,6 +492,11 @@
             color: var(--danger);
         }
 
+        .xqi-root .status-pending {
+            background: var(--panel-soft);
+            color: var(--muted);
+        }
+
         .xqi-root .duration {
             color: var(--muted);
             font: 11px Consolas, monospace;
@@ -312,6 +510,11 @@
             color: #735619;
             font-size: 11px;
             line-height: 1.5;
+        }
+
+        .xqi-root .message-compact {
+            padding: 8px 10px;
+            line-height: 1.4;
         }
 
         .xqi-root .error-box {
@@ -511,6 +714,7 @@
                 flex-direction: column;
             }
 
+            .xqi-root .result-controls,
             .xqi-root .result-header-meta {
                 justify-content: flex-start;
             }
@@ -519,8 +723,33 @@
                 justify-content: flex-start;
             }
 
-            .xqi-root .button-primary {
+            .xqi-root .execution-guide {
+                grid-template-columns: 1fr;
+            }
+
+            .xqi-root .editor-footer {
+                grid-template-columns: 1fr;
+            }
+
+            .xqi-root .guide-arrow {
+                display: none;
+            }
+
+            .xqi-root .execution-actions {
                 width: 100%;
+            }
+
+            .xqi-root .button-action {
+                width: 50%;
+            }
+
+            .xqi-root .result-controls {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .xqi-root .technical-header {
+                align-items: flex-start;
             }
 
             .xqi-root .meta-row {
