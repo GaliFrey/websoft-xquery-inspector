@@ -3,6 +3,18 @@ var requestForm = null;
 var requestAction = "";
 var apiRequest = false;
 
+function BuildXQueryInspectorError(operation, failureStage, errorType, errorText)
+{
+    var errorResult = new SafeObject;
+    errorResult.SetProperty("success", false);
+    errorResult.SetProperty("contractVersion", 1);
+    errorResult.SetProperty("operation", operation);
+    errorResult.SetProperty("failureStage", failureStage);
+    errorResult.SetProperty("errorType", errorType);
+    errorResult.SetProperty("error", errorText);
+    return EncodeJson(errorResult);
+}
+
 try
 {
     requestForm = Request.Form;
@@ -16,9 +28,14 @@ catch (formError)
 
 if (apiRequest)
 {
+    Request.RespContentType = "application/json; charset=utf-8";
+    var responseBody = "";
+
     try
     {
         var maxXQueryLength = 200000;
+        var maxExecutionTimeoutSeconds = 3600;
+        var defaultExecutionTimeoutSeconds = 30;
         var xquery = "" + requestForm.xquery;
         if (xquery == "" || xquery == "undefined")
         {
@@ -27,46 +44,87 @@ if (apiRequest)
 
         if (StrCharCount(xquery) > maxXQueryLength)
         {
-            Request.SetRespStatus(413, "XQuery is too large");
-            Request.RespContentType = "text/plain; charset=utf-8";
-            Response.Write(
+            responseBody = BuildXQueryInspectorError(
+                requestAction,
+                "validate-input",
+                "ArgumentException",
                 "XQuery exceeds the " + maxXQueryLength + " character limit."
             );
         }
         else
         {
-            var assembly = tools.dotnet_host.Object.GetAssembly(
-                "XQueryInspector.dll"
-            );
-            var inspector = assembly.CreateClassObject(
-                "XQueryInspector.Inspector"
-            );
-            var result = null;
+            var executionTimeoutSeconds = defaultExecutionTimeoutSeconds;
+            var executeRequestReady = true;
             if (requestAction == "execute")
             {
-                result = inspector.Execute(
-                    tools.spxml_unibridge.Object.provider,
-                    xquery
-                );
-            }
-            else
-            {
-                result = inspector.Inspect(
-                    tools.spxml_unibridge.Object.provider,
-                    xquery
-                );
+                var executionTimeoutText = "" + requestForm.timeout_seconds;
+                if (
+                    executionTimeoutText != "" &&
+                    executionTimeoutText != "undefined"
+                )
+                {
+                    executionTimeoutSeconds = OptInt(
+                        executionTimeoutText,
+                        null
+                    );
+                }
+                if (
+                    executionTimeoutSeconds == null ||
+                    executionTimeoutSeconds < 1 ||
+                    executionTimeoutSeconds > maxExecutionTimeoutSeconds
+                )
+                {
+                    responseBody = BuildXQueryInspectorError(
+                        requestAction,
+                        "validate-input",
+                        "ArgumentOutOfRangeException",
+                        "Execution timeout must be between 1 and " +
+                            maxExecutionTimeoutSeconds + " seconds."
+                    );
+                    executeRequestReady = false;
+                }
             }
 
-            Request.RespContentType = "application/json; charset=utf-8";
-            Response.Write(result);
+            if (executeRequestReady)
+            {
+                var assembly = tools.dotnet_host.Object.GetAssembly(
+                    "XQueryInspector.dll"
+                );
+                var inspector = assembly.CreateClassObject(
+                    "XQueryInspector.Inspector"
+                );
+                var result = null;
+                if (requestAction == "execute")
+                {
+                    result = inspector.ExecuteWithTimeout(
+                        tools.spxml_unibridge.Object.provider,
+                        xquery,
+                        executionTimeoutSeconds
+                    );
+                }
+                else
+                {
+                    result = inspector.Inspect(
+                        tools.spxml_unibridge.Object.provider,
+                        xquery
+                    );
+                }
+
+                responseBody = "" + result;
+            }
         }
     }
     catch (exception)
     {
-        Request.SetRespStatus(500, "XQuery request failed");
-        Request.RespContentType = "text/plain; charset=utf-8";
-        Response.Write("" + exception);
+        responseBody = BuildXQueryInspectorError(
+            requestAction,
+            "server-request",
+            "ServerError",
+            "" + exception
+        );
     }
+
+    Response.Write(responseBody);
 }
 else
 {

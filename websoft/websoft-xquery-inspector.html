@@ -3,6 +3,18 @@ var requestForm = null;
 var requestAction = "";
 var apiRequest = false;
 
+function BuildXQueryInspectorError(operation, failureStage, errorType, errorText)
+{
+    var errorResult = new SafeObject;
+    errorResult.SetProperty("success", false);
+    errorResult.SetProperty("contractVersion", 1);
+    errorResult.SetProperty("operation", operation);
+    errorResult.SetProperty("failureStage", failureStage);
+    errorResult.SetProperty("errorType", errorType);
+    errorResult.SetProperty("error", errorText);
+    return EncodeJson(errorResult);
+}
+
 try
 {
     requestForm = Request.Form;
@@ -16,9 +28,14 @@ catch (formError)
 
 if (apiRequest)
 {
+    Request.RespContentType = "application/json; charset=utf-8";
+    var responseBody = "";
+
     try
     {
         var maxXQueryLength = 200000;
+        var maxExecutionTimeoutSeconds = 3600;
+        var defaultExecutionTimeoutSeconds = 30;
         var xquery = "" + requestForm.xquery;
         if (xquery == "" || xquery == "undefined")
         {
@@ -27,46 +44,87 @@ if (apiRequest)
 
         if (StrCharCount(xquery) > maxXQueryLength)
         {
-            Request.SetRespStatus(413, "XQuery is too large");
-            Request.RespContentType = "text/plain; charset=utf-8";
-            Response.Write(
+            responseBody = BuildXQueryInspectorError(
+                requestAction,
+                "validate-input",
+                "ArgumentException",
                 "XQuery exceeds the " + maxXQueryLength + " character limit."
             );
         }
         else
         {
-            var assembly = tools.dotnet_host.Object.GetAssembly(
-                "XQueryInspector.dll"
-            );
-            var inspector = assembly.CreateClassObject(
-                "XQueryInspector.Inspector"
-            );
-            var result = null;
+            var executionTimeoutSeconds = defaultExecutionTimeoutSeconds;
+            var executeRequestReady = true;
             if (requestAction == "execute")
             {
-                result = inspector.Execute(
-                    tools.spxml_unibridge.Object.provider,
-                    xquery
-                );
-            }
-            else
-            {
-                result = inspector.Inspect(
-                    tools.spxml_unibridge.Object.provider,
-                    xquery
-                );
+                var executionTimeoutText = "" + requestForm.timeout_seconds;
+                if (
+                    executionTimeoutText != "" &&
+                    executionTimeoutText != "undefined"
+                )
+                {
+                    executionTimeoutSeconds = OptInt(
+                        executionTimeoutText,
+                        null
+                    );
+                }
+                if (
+                    executionTimeoutSeconds == null ||
+                    executionTimeoutSeconds < 1 ||
+                    executionTimeoutSeconds > maxExecutionTimeoutSeconds
+                )
+                {
+                    responseBody = BuildXQueryInspectorError(
+                        requestAction,
+                        "validate-input",
+                        "ArgumentOutOfRangeException",
+                        "Execution timeout must be between 1 and " +
+                            maxExecutionTimeoutSeconds + " seconds."
+                    );
+                    executeRequestReady = false;
+                }
             }
 
-            Request.RespContentType = "application/json; charset=utf-8";
-            Response.Write(result);
+            if (executeRequestReady)
+            {
+                var assembly = tools.dotnet_host.Object.GetAssembly(
+                    "XQueryInspector.dll"
+                );
+                var inspector = assembly.CreateClassObject(
+                    "XQueryInspector.Inspector"
+                );
+                var result = null;
+                if (requestAction == "execute")
+                {
+                    result = inspector.ExecuteWithTimeout(
+                        tools.spxml_unibridge.Object.provider,
+                        xquery,
+                        executionTimeoutSeconds
+                    );
+                }
+                else
+                {
+                    result = inspector.Inspect(
+                        tools.spxml_unibridge.Object.provider,
+                        xquery
+                    );
+                }
+
+                responseBody = "" + result;
+            }
         }
     }
     catch (exception)
     {
-        Request.SetRespStatus(500, "XQuery request failed");
-        Request.RespContentType = "text/plain; charset=utf-8";
-        Response.Write("" + exception);
+        responseBody = BuildXQueryInspectorError(
+            requestAction,
+            "server-request",
+            "ServerError",
+            "" + exception
+        );
     }
+
+    Response.Write(responseBody);
 }
 else
 {
@@ -104,6 +162,7 @@ else
         }
 
         .xqi-root button,
+        .xqi-root input,
         .xqi-root textarea {
             font: inherit;
         }
@@ -218,9 +277,41 @@ else
 
         .xqi-root .execution-actions {
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
+            justify-content: flex-end;
             justify-self: end;
             gap: 8px;
+        }
+
+        .xqi-root .execution-timeout {
+            display: inline-flex;
+            min-height: 42px;
+            align-items: center;
+            gap: 6px;
+            color: var(--muted);
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .xqi-root .execution-timeout input {
+            width: 68px;
+            min-height: 34px;
+            padding: 6px 7px;
+            border: 1px solid var(--line-strong);
+            border-radius: 8px;
+            background: #ffffff;
+            color: var(--text);
+        }
+
+        .xqi-root .execution-timeout input:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+
+        .xqi-root .execution-timeout input:disabled {
+            cursor: wait;
+            opacity: .58;
         }
 
         .xqi-root .button-execute {
@@ -865,6 +956,11 @@ else
                         </div>
                     </div>
                     <div class="execution-actions">
+                        <label class="execution-timeout" for="xqi-timeout-seconds">
+                            <span>Тайм-аут</span>
+                            <input id="xqi-timeout-seconds" type="number" min="1" max="3600" step="1" value="30" inputmode="numeric">
+                            <span>сек.</span>
+                        </label>
                         <button class="button button-action button-inspect" id="xqi-inspect-button" type="button">
                             <span id="xqi-inspect-button-label">Инспектировать</span>
                         </button>
@@ -922,10 +1018,11 @@ else
                 ].join("\n"),
                 supportedContractVersion: 1,
                 maxXQueryLength: 200000,
+                defaultExecutionTimeoutSeconds: 30,
+                maxExecutionTimeoutSeconds: 3600,
                 inspectEndpoint:
                     "/custom_web_template.html" +
-                    "?object_code=websoft-xquery-inspector" +
-                    "&content_type=application%2Fjson%3B%20charset%3Dutf-8"
+                    "?object_code=websoft-xquery-inspector"
             };
 
             initialize(document.currentScript.parentNode, fetch, function () {
@@ -973,7 +1070,9 @@ else
                 function run(operation) {
                     var xquery;
                     var validationMessage;
+                    var validationTarget;
                     var startedAt;
+                    var timeoutSeconds;
 
                     if (state.status === "loading") {
                         return Promise.resolve();
@@ -981,13 +1080,24 @@ else
 
                     xquery = dom.editor.value.trim();
                     validationMessage = xQueryValidationMessage(xquery);
+                    validationTarget = dom.editor;
+                    if (!validationMessage && operation === "execute") {
+                        timeoutSeconds = parseExecutionTimeoutSeconds(
+                            dom.timeoutSeconds.value
+                        );
+                        if (timeoutSeconds === null) {
+                            validationMessage = "Тайм-аут должен быть целым числом от 1 до "
+                                + config.maxExecutionTimeoutSeconds + " секунд.";
+                            validationTarget = dom.timeoutSeconds;
+                        }
+                    }
                     if (validationMessage) {
                         state.status = "error";
                         state.activeOperation = operation;
                         render.selectOperation(operation);
                         render.transportError(validationMessage);
                         refreshTechnical();
-                        dom.editor.focus();
+                        validationTarget.focus();
                         return Promise.resolve();
                     }
 
@@ -1004,7 +1114,7 @@ else
                     render.loading(true, operation);
                     startedAt = now();
 
-                    return transport.request(operation, xquery).then(function (data) {
+                    return transport.request(operation, xquery, timeoutSeconds).then(function (data) {
                         var viewModel = resultViewModel(data);
                         state.status = viewModel.state;
                         state.outputs[operation] = {
@@ -1049,6 +1159,7 @@ else
 
                 bindEditor(dom, inspect, execute, showOutput, refreshTechnical);
                 dom.editor.value = config.sample;
+                dom.timeoutSeconds.value = config.defaultExecutionTimeoutSeconds;
                 updateLineNumbers(dom);
                 showOutput("inspect");
 
@@ -1069,6 +1180,7 @@ else
                     inspectButtonLabel: root.querySelector("#xqi-inspect-button-label"),
                     executeButton: root.querySelector("#xqi-execute-button"),
                     executeButtonLabel: root.querySelector("#xqi-execute-button-label"),
+                    timeoutSeconds: root.querySelector("#xqi-timeout-seconds"),
                     inspectTab: root.querySelector("#xqi-inspect-tab"),
                     executeTab: root.querySelector("#xqi-execute-tab"),
                     resultNode: root.querySelector("#xqi-result"),
@@ -1159,9 +1271,27 @@ else
                 return "";
             }
 
+            function parseExecutionTimeoutSeconds(value) {
+                var text = String(value).trim();
+                var parsed;
+                if (!/^\d+$/.test(text)) {
+                    return null;
+                }
+                parsed = Number(text);
+                if (parsed < 1 || parsed > config.maxExecutionTimeoutSeconds) {
+                    return null;
+                }
+                return parsed;
+            }
+
             // Transport
             function createTransport(fetchImplementation, endpoint) {
-                function request(action, xquery) {
+                function request(action, xquery, timeoutSeconds) {
+                    var body = "action=" + encodeURIComponent(action)
+                        + "&xquery=" + encodeURIComponent(xquery);
+                    if (action === "execute" && timeoutSeconds !== undefined) {
+                        body += "&timeout_seconds=" + encodeURIComponent(timeoutSeconds);
+                    }
                     return fetchImplementation(endpoint, {
                         method: "POST",
                         credentials: "same-origin",
@@ -1170,8 +1300,7 @@ else
                             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                             "X-Requested-With": "XMLHttpRequest"
                         },
-                        body: "action=" + encodeURIComponent(action)
-                            + "&xquery=" + encodeURIComponent(xquery)
+                        body: body
                     }).then(function (response) {
                         return response.text().then(function (responseText) {
                             if (!response.ok) {
@@ -1212,7 +1341,9 @@ else
                 return {
                     state: data.success ? "result" : "error",
                     statusText: execute
-                        ? (data.success ? "Выполнен успешно" : "Выполнен с ошибкой")
+                        ? (data.timedOut
+                            ? "Превышен тайм-аут"
+                            : (data.success ? "Выполнен успешно" : "Выполнен с ошибкой"))
                         : (data.success ? "SQL сформирован" : "Ошибка инспекции"),
                     statusClass: data.success ? "status-success" : "status-error",
                     data: data,
@@ -1354,6 +1485,7 @@ else
                     var oldSpinner = activeButton.querySelector(".spinner");
                     dom.inspectButton.disabled = loading;
                     dom.executeButton.disabled = loading;
+                    dom.timeoutSeconds.disabled = loading;
                     activeLabel.textContent = loading
                         ? (operation === "execute" ? "Выполнение…" : "Инспекция…")
                         : (operation === "execute" ? "Выполнить" : "Инспектировать");
@@ -1532,6 +1664,8 @@ else
                     items = items.concat([
                         ["Выполнение начато", data.executionAttempted],
                         ["Выполнение успешно", data.executionSuccess],
+                        ["Тайм-аут, сек.", data.timeoutSeconds],
+                        ["Превышен тайм-аут", data.timedOut],
                         ["Прочитано строк", data.rowsRead],
                         ["SQL после выполнения", data.executedSql ? "Получен" : "Не получен"],
                         ["Ошибка получения SQL", data.executedCommandCaptureError]

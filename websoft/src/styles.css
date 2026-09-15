@@ -29,6 +29,7 @@
         }
 
         .xqi-root button,
+        .xqi-root input,
         .xqi-root textarea {
             font: inherit;
         }
@@ -143,9 +144,41 @@
 
         .xqi-root .execution-actions {
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
+            justify-content: flex-end;
             justify-self: end;
             gap: 8px;
+        }
+
+        .xqi-root .execution-timeout {
+            display: inline-flex;
+            min-height: 42px;
+            align-items: center;
+            gap: 6px;
+            color: var(--muted);
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .xqi-root .execution-timeout input {
+            width: 68px;
+            min-height: 34px;
+            padding: 6px 7px;
+            border: 1px solid var(--line-strong);
+            border-radius: 8px;
+            background: #ffffff;
+            color: var(--text);
+        }
+
+        .xqi-root .execution-timeout input:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+
+        .xqi-root .execution-timeout input:disabled {
+            cursor: wait;
+            opacity: .58;
         }
 
         .xqi-root .button-execute {

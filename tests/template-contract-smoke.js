@@ -27,6 +27,13 @@ const styles = fs.readFileSync(path.join(
     "src",
     "styles.css"
 ), "utf8").replace(/\r\n?/g, "\n");
+const serverPrefix = fs.readFileSync(path.join(
+    __dirname,
+    "..",
+    "websoft",
+    "src",
+    "server-prefix.html"
+), "utf8").replace(/\r\n?/g, "\n");
 const scriptStart = template.lastIndexOf("<script>");
 const scriptEnd = template.lastIndexOf("</script>");
 
@@ -45,6 +52,43 @@ const resultCards = clientApi.resultCards;
 const resultViewModel = clientApi.resultViewModel;
 const inspectionSqlWarningText = clientApi.inspectionSqlWarningText;
 
+assert(
+    clientApi.config.inspectEndpoint.indexOf("content_type=") < 0,
+    "API endpoint lets the outer custom template overwrite response headers."
+);
+const responseWritePosition = serverPrefix.indexOf("Response.Write(responseBody);");
+const responseTypePosition = serverPrefix.indexOf(
+    'Request.RespContentType = "application/json; charset=utf-8";'
+);
+const apiTryPosition = serverPrefix.indexOf("    try\n", serverPrefix.indexOf("if (apiRequest)"));
+assert(
+    responseTypePosition >= 0
+        && apiTryPosition > responseTypePosition
+        && responseWritePosition > apiTryPosition,
+    "API content type is not set before request execution."
+);
+assert(
+    (serverPrefix.match(/Response\.Write\(/g) || []).length === 1,
+    "API handler writes the response more than once."
+);
+assert(
+    serverPrefix.indexOf("Response.WriteMode") < 0,
+    "API handler uses unsupported Response.WriteMode."
+);
+assert(
+    serverPrefix.indexOf("Request.SetRespStatus") < 0,
+    "API handler changes HTTP status after request execution."
+);
+assert(
+    serverPrefix.indexOf("BuildXQueryInspectorError") >= 0
+        && serverPrefix.indexOf("EncodeJson(errorResult)") >= 0,
+    "API errors are not returned as JSON."
+);
+assert(
+    serverPrefix.indexOf("inspector.ExecuteWithTimeout(") >= 0,
+    "API uses an ambiguous Execute() overload for timed execution."
+);
+
 assert(getContractState({ contractVersion: 1 }) === "supported", "Contract 1 was rejected.");
 assert(getContractState({ success: true }) === "legacy", "Legacy response was rejected.");
 assert(getContractState({ contractVersion: 2 }) === "unsupported", "Unknown contract was accepted.");
@@ -62,6 +106,15 @@ assert(
         && resultViewModel({ contractVersion: 1, operation: "execute", success: false }).statusText
             === "Выполнен с ошибкой",
     "Execution status adaptation is incorrect."
+);
+assert(
+    resultViewModel({
+        contractVersion: 1,
+        operation: "execute",
+        success: false,
+        timedOut: true
+    }).statusText === "Превышен тайм-аут",
+    "Execution timeout status is incorrect."
 );
 assert(
     effectiveXQuery({ effectiveXQuery: "prepared", xQuery: "source" }) === "prepared",
@@ -94,6 +147,7 @@ verifyTemplateFileProperties();
 
 const xQueryCharacterCount = clientApi.xQueryCharacterCount;
 const xQueryValidationMessage = clientApi.xQueryValidationMessage;
+const parseExecutionTimeoutSeconds = clientApi.parseExecutionTimeoutSeconds;
 assert(xQueryCharacterCount("AЯ😀") === 3, "Unicode character count is incorrect.");
 assert(xQueryValidationMessage("") !== "", "Empty XQuery was accepted.");
 assert(
@@ -104,6 +158,12 @@ assert(
     xQueryValidationMessage("😀".repeat(200001)).includes("200000"),
     "Oversized XQuery was accepted or reported with the wrong limit."
 );
+assert(parseExecutionTimeoutSeconds("30") === 30, "Valid execution timeout was rejected.");
+assert(parseExecutionTimeoutSeconds("1") === 1, "Minimum execution timeout was rejected.");
+assert(parseExecutionTimeoutSeconds("3600") === 3600, "Maximum execution timeout was rejected.");
+assert(parseExecutionTimeoutSeconds("0") === null, "Zero execution timeout was accepted.");
+assert(parseExecutionTimeoutSeconds("1.5") === null, "Fractional execution timeout was accepted.");
+assert(parseExecutionTimeoutSeconds("3601") === null, "Oversized execution timeout was accepted.");
 
 const formatXQuery = clientApi.formatXQuery;
 const formatSql = clientApi.formatSql;
@@ -253,9 +313,10 @@ async function verifyTransportBehavior() {
         requestedOptions.body === "action=inspect&xquery=for%20%24x%20return%20%24x",
         "Transport changed the request body."
     );
-    await transport.request("execute", "for $x return $x");
+    await transport.request("execute", "for $x return $x", 30);
     assert(
-        requestedOptions.body === "action=execute&xquery=for%20%24x%20return%20%24x",
+        requestedOptions.body
+            === "action=execute&xquery=for%20%24x%20return%20%24x&timeout_seconds=30",
         "Transport did not send the execution action."
     );
 
@@ -398,6 +459,14 @@ async function verifyRendererAndInstanceIsolation() {
             && preservedRoot.nodes.technical.textContent.includes("select inspected"),
         "Client-side validation replaced accumulated server responses."
     );
+    preservedRoot.nodes.editor.value = "preserved query";
+    preservedRoot.nodes.timeoutSeconds.value = "0";
+    await preservedApp.execute();
+    assert(
+        preservedRequestCount === 2 && preservedRoot.nodes.timeoutSeconds.focused === true,
+        "Invalid execution timeout started a request or focused the wrong control."
+    );
+    preservedRoot.nodes.timeoutSeconds.value = "30";
     preservedRoot.nodes.editor.value = "changed query";
     preservedRoot.nodes.editor.listeners.input();
     assert(
@@ -774,7 +843,8 @@ function createClientApi(options) {
         "config", "initialize", "getDom", "createTransport", "createRenderer",
         "resultViewModel", "getContractState", "effectiveXQuery", "resultCards",
         "inspectionSqlWarningText",
-        "xQueryCharacterCount", "xQueryValidationMessage", "parametersTsv",
+        "xQueryCharacterCount", "xQueryValidationMessage", "parseExecutionTimeoutSeconds",
+        "parametersTsv",
         "technicalDiagnosticSections", "technicalDiagnosticLines",
         "millisecondsText", "errorCard", "copyText",
         "formatXQuery", "formatSql"
@@ -847,6 +917,7 @@ function createDomHarness() {
             inspectButtonLabel: createTestNode("span"),
             executeButton: createTestNode("button"),
             executeButtonLabel: createTestNode("span"),
+            timeoutSeconds: createTestNode("input"),
             inspectTab: createTestNode("button"),
             executeTab: createTestNode("button"),
             result: createTestNode("div"),
@@ -864,6 +935,7 @@ function createDomHarness() {
             "#xqi-inspect-button-label": nodes.inspectButtonLabel,
             "#xqi-execute-button": nodes.executeButton,
             "#xqi-execute-button-label": nodes.executeButtonLabel,
+            "#xqi-timeout-seconds": nodes.timeoutSeconds,
             "#xqi-inspect-tab": nodes.inspectTab,
             "#xqi-execute-tab": nodes.executeTab,
             "#xqi-result": nodes.result,
@@ -877,6 +949,7 @@ function createDomHarness() {
         nodes.inspectButton.appendChild(nodes.inspectButtonLabel);
         nodes.executeButton.appendChild(nodes.executeButtonLabel);
         nodes.editor.focus = function () { nodes.editor.focused = true; };
+        nodes.timeoutSeconds.focus = function () { nodes.timeoutSeconds.focused = true; };
         const root = createTestNode("div");
         root.name = name;
         root.ownerDocument = document;

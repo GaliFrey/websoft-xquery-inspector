@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 
 namespace XQueryInspector;
 
@@ -50,6 +51,11 @@ public sealed class Inspector
     /// Maximum length of one byte-array parameter value.
     /// </summary>
     public const int MaxByteArrayLength = 1048576;
+
+    /// <summary>
+    /// Maximum accepted execution timeout in seconds.
+    /// </summary>
+    public const int MaxExecutionTimeoutSeconds = 3600;
 
     private const int ContractVersion = 1;
     private const long MaxSafeJsonInteger = 9007199254740991L;
@@ -96,7 +102,8 @@ public sealed class Inspector
             provider,
             xquery,
             useBasicHierarchyPreprocessing,
-            execute: false);
+            execute: false,
+            executionTimeoutSeconds: null);
 
         return SerializeResult(result);
     }
@@ -123,7 +130,28 @@ public sealed class Inspector
             provider,
             xquery,
             useBasicHierarchyPreprocessing,
-            execute: true);
+            execute: true,
+            executionTimeoutSeconds: null);
+
+        return SerializeResult(result);
+    }
+
+    /// <summary>
+    /// Executes XQuery with a total execution deadline and a matching
+    /// per-command timeout. The timeout begins before XQuery translation;
+    /// synchronous translation can only be observed, not interrupted.
+    /// </summary>
+    public string ExecuteWithTimeout(
+        object? provider,
+        string? xquery,
+        long executionTimeoutSeconds)
+    {
+        InspectionResult result = InspectCore(
+            provider,
+            xquery,
+            useBasicHierarchyPreprocessing: true,
+            execute: true,
+            executionTimeoutSeconds);
 
         return SerializeResult(result);
     }
@@ -156,7 +184,8 @@ public sealed class Inspector
         object? providerValue,
         string? xquery,
         bool useBasicHierarchyPreprocessing,
-        bool execute)
+        bool execute,
+        long? executionTimeoutSeconds)
     {
         long totalStartedAt = Stopwatch.GetTimestamp();
         InspectionResult result = new()
@@ -164,12 +193,14 @@ public sealed class Inspector
             ContractVersion = ContractVersion,
             InspectorVersion = GetInspectorVersion(),
             Operation = execute ? "execute" : "inspect",
-            XQuery = xquery
+            XQuery = xquery,
+            TimeoutSeconds = executionTimeoutSeconds
         };
 
         object? collection = null;
         object? queryOwner = null;
         object? query = null;
+        ExecutionTimeoutControl? timeoutControl = null;
         string failureStage = "validate-input";
 
         try
@@ -184,6 +215,20 @@ public sealed class Inspector
                 throw new ArgumentException(
                     $"XQuery must not exceed {MaxXQueryLength} characters.",
                     nameof(xquery));
+            }
+
+            if (executionTimeoutSeconds is not null)
+            {
+                if (!execute
+                    || executionTimeoutSeconds < 1
+                    || executionTimeoutSeconds > MaxExecutionTimeoutSeconds)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(executionTimeoutSeconds),
+                        $"Execution timeout must be between 1 and {MaxExecutionTimeoutSeconds} seconds.");
+                }
+
+                timeoutControl = new ExecutionTimeoutControl(executionTimeoutSeconds.Value);
             }
 
             failureStage = "preprocess-xquery";
@@ -269,6 +314,17 @@ public sealed class Inspector
                 object command = GetMemberValue(query, "command")
                     ?? throw new MissingMemberException(queryRuntimeType.FullName, "command");
 
+                if (timeoutControl is not null)
+                {
+                    failureStage = "configure-timeout";
+                    timeoutControl.AttachCommand(command);
+                    timeoutControl.ThrowIfTimedOut();
+                    SetMemberValue(
+                        command,
+                        "CommandTimeout",
+                        timeoutControl.GetRemainingCommandTimeoutSeconds());
+                }
+
                 failureStage = "read-command";
                 result.Sql = Convert.ToString(
                     GetMemberValue(command, "CommandText"),
@@ -310,7 +366,12 @@ public sealed class Inspector
                 long executionStartedAt = Stopwatch.GetTimestamp();
                 try
                 {
-                    result.RowsRead = EnumerateCollection(collection, queryOwner);
+                    result.RowsRead = EnumerateCollection(
+                        collection,
+                        queryOwner,
+                        timeoutControl);
+                    timeoutControl?.CompleteExecution();
+                    timeoutControl?.ThrowIfTimedOut();
                     result.ExecutionSuccess = true;
                 }
                 finally
@@ -326,6 +387,14 @@ public sealed class Inspector
         catch (Exception exception)
         {
             Exception actual = UnwrapException(exception);
+            if (timeoutControl?.HasTimedOutOrDeadlineExpired() == true)
+            {
+                result.TimedOut = true;
+                failureStage = "execute-timeout";
+                actual = new TimeoutException(
+                    $"XQuery execution exceeded the {executionTimeoutSeconds} second timeout.",
+                    actual);
+            }
             result.Success = false;
             if (result.ExecutionAttempted && result.ExecutionSuccess is null)
             {
@@ -337,6 +406,7 @@ public sealed class Inspector
         }
         finally
         {
+            timeoutControl?.Dispose();
             if (collection is not null)
             {
                 long cleanupStartedAt = Stopwatch.GetTimestamp();
@@ -375,7 +445,10 @@ public sealed class Inspector
         return result;
     }
 
-    private static long EnumerateCollection(object collection, object? queryOwner)
+    private static long EnumerateCollection(
+        object collection,
+        object? queryOwner,
+        ExecutionTimeoutControl? timeoutControl)
     {
         object cursorSource = queryOwner ?? collection;
         MethodInfo? getFirst = FindParameterlessMethod(cursorSource.GetType(), "GetFirst");
@@ -389,16 +462,19 @@ public sealed class Inspector
         if (getFirst is not null && getNext is not null)
         {
             long count = 0;
+            timeoutControl?.ThrowIfTimedOut();
             bool hasCurrent = Convert.ToBoolean(
                 getFirst.Invoke(cursorSource, null),
                 CultureInfo.InvariantCulture);
             while (hasCurrent)
             {
+                timeoutControl?.ThrowIfTimedOut();
                 checked
                 {
                     count++;
                 }
 
+                timeoutControl?.ThrowIfTimedOut();
                 hasCurrent = Convert.ToBoolean(
                     getNext.Invoke(cursorSource, null),
                     CultureInfo.InvariantCulture);
@@ -415,8 +491,14 @@ public sealed class Inspector
         try
         {
             long count = 0;
-            while (enumerator.MoveNext())
+            while (true)
             {
+                timeoutControl?.ThrowIfTimedOut();
+                if (!enumerator.MoveNext())
+                {
+                    break;
+                }
+
                 _ = enumerator.Current;
                 checked
                 {
@@ -611,6 +693,28 @@ public sealed class Inspector
         }
 
         return null;
+    }
+
+    private static void SetMemberValue(object value, string name, object memberValue)
+    {
+        for (Type? type = value.GetType(); type is not null; type = type.BaseType)
+        {
+            PropertyInfo? property = type.GetProperty(name, MemberFlags | BindingFlags.DeclaredOnly);
+            if (property is not null && property.CanWrite)
+            {
+                property.SetValue(value, memberValue, null);
+                return;
+            }
+
+            FieldInfo? field = type.GetField(name, MemberFlags | BindingFlags.DeclaredOnly);
+            if (field is not null)
+            {
+                field.SetValue(value, memberValue);
+                return;
+            }
+        }
+
+        throw new MissingMemberException(value.GetType().FullName, name);
     }
 
     private static List<ParameterResult> ReadParameters(object? parametersValue)
@@ -949,6 +1053,165 @@ internal sealed class ParameterNormalizationException : InvalidOperationExceptio
     }
 }
 
+internal sealed class ExecutionTimeoutControl : IDisposable
+{
+    private readonly object syncRoot = new();
+    private readonly long timeoutSeconds;
+    private readonly long startedAt;
+    private readonly Timer timer;
+    private object? command;
+    private int timedOut;
+    private bool disposed;
+
+    public ExecutionTimeoutControl(long timeoutSeconds)
+    {
+        this.timeoutSeconds = timeoutSeconds;
+        startedAt = Stopwatch.GetTimestamp();
+        timer = new Timer(
+            OnTimeout,
+            null,
+            TimeSpan.FromSeconds(timeoutSeconds),
+            Timeout.InfiniteTimeSpan);
+    }
+
+    public bool IsTimedOut => Volatile.Read(ref timedOut) != 0;
+
+    public void AttachCommand(object value)
+    {
+        lock (syncRoot)
+        {
+            if (disposed)
+            {
+                throw new ObjectDisposedException(nameof(ExecutionTimeoutControl));
+            }
+
+            command = value;
+            if (HasTimedOutOrDeadlineExpired())
+            {
+                TryCancelCommand(value);
+            }
+        }
+    }
+
+    public int GetRemainingCommandTimeoutSeconds()
+    {
+        ThrowIfTimedOut();
+        double remainingSeconds = timeoutSeconds - GetElapsedSeconds();
+        if (remainingSeconds <= 0)
+        {
+            MarkTimedOut();
+            ThrowIfTimedOut();
+        }
+
+        return Math.Max(1, (int)Math.Ceiling(remainingSeconds));
+    }
+
+    public void ThrowIfTimedOut()
+    {
+        if (HasTimedOutOrDeadlineExpired())
+        {
+            throw new TimeoutException(
+                $"XQuery execution exceeded the {timeoutSeconds} second timeout.");
+        }
+    }
+
+    public void CompleteExecution()
+    {
+        lock (syncRoot)
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            if (DeadlineExpired)
+            {
+                MarkTimedOut();
+            }
+
+            StopTimer();
+        }
+    }
+
+    public bool HasTimedOutOrDeadlineExpired()
+    {
+        if (!IsTimedOut && DeadlineExpired)
+        {
+            MarkTimedOut();
+        }
+
+        return IsTimedOut;
+    }
+
+    public void Dispose()
+    {
+        lock (syncRoot)
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            StopTimer();
+        }
+    }
+
+    private void OnTimeout(object? state)
+    {
+        lock (syncRoot)
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            MarkTimedOut();
+            if (command is not null)
+            {
+                TryCancelCommand(command);
+            }
+        }
+    }
+
+    private bool DeadlineExpired => GetElapsedSeconds() >= timeoutSeconds;
+
+    private double GetElapsedSeconds()
+    {
+        return (Stopwatch.GetTimestamp() - startedAt) / (double)Stopwatch.Frequency;
+    }
+
+    private void MarkTimedOut()
+    {
+        Interlocked.Exchange(ref timedOut, 1);
+    }
+
+    private void StopTimer()
+    {
+        disposed = true;
+        timer.Dispose();
+        command = null;
+    }
+
+    private static void TryCancelCommand(object value)
+    {
+        try
+        {
+            MethodInfo? cancel = value.GetType().GetMethod(
+                "Cancel",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                binder: null,
+                types: Type.EmptyTypes,
+                modifiers: null);
+            cancel?.Invoke(value, null);
+        }
+        catch
+        {
+            // The execution thread observes either the provider error or the
+            // timeout flag and remains responsible for collection cleanup.
+        }
+    }
+}
+
 internal sealed class InspectionResult
 {
     public bool Success { get; set; }
@@ -996,6 +1259,10 @@ internal sealed class InspectionResult
     public bool? ExecutionSuccess { get; set; }
 
     public long? RowsRead { get; set; }
+
+    public long? TimeoutSeconds { get; set; }
+
+    public bool TimedOut { get; set; }
 
     public string? ExecutedSql { get; set; }
 

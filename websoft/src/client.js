@@ -10,10 +10,11 @@
                 ].join("\n"),
                 supportedContractVersion: 1,
                 maxXQueryLength: 200000,
+                defaultExecutionTimeoutSeconds: 30,
+                maxExecutionTimeoutSeconds: 3600,
                 inspectEndpoint:
                     "/custom_web_template.html" +
-                    "?object_code=websoft-xquery-inspector" +
-                    "&content_type=application%2Fjson%3B%20charset%3Dutf-8"
+                    "?object_code=websoft-xquery-inspector"
             };
 
             initialize(document.currentScript.parentNode, fetch, function () {
@@ -61,7 +62,9 @@
                 function run(operation) {
                     var xquery;
                     var validationMessage;
+                    var validationTarget;
                     var startedAt;
+                    var timeoutSeconds;
 
                     if (state.status === "loading") {
                         return Promise.resolve();
@@ -69,13 +72,24 @@
 
                     xquery = dom.editor.value.trim();
                     validationMessage = xQueryValidationMessage(xquery);
+                    validationTarget = dom.editor;
+                    if (!validationMessage && operation === "execute") {
+                        timeoutSeconds = parseExecutionTimeoutSeconds(
+                            dom.timeoutSeconds.value
+                        );
+                        if (timeoutSeconds === null) {
+                            validationMessage = "Тайм-аут должен быть целым числом от 1 до "
+                                + config.maxExecutionTimeoutSeconds + " секунд.";
+                            validationTarget = dom.timeoutSeconds;
+                        }
+                    }
                     if (validationMessage) {
                         state.status = "error";
                         state.activeOperation = operation;
                         render.selectOperation(operation);
                         render.transportError(validationMessage);
                         refreshTechnical();
-                        dom.editor.focus();
+                        validationTarget.focus();
                         return Promise.resolve();
                     }
 
@@ -92,7 +106,7 @@
                     render.loading(true, operation);
                     startedAt = now();
 
-                    return transport.request(operation, xquery).then(function (data) {
+                    return transport.request(operation, xquery, timeoutSeconds).then(function (data) {
                         var viewModel = resultViewModel(data);
                         state.status = viewModel.state;
                         state.outputs[operation] = {
@@ -137,6 +151,7 @@
 
                 bindEditor(dom, inspect, execute, showOutput, refreshTechnical);
                 dom.editor.value = config.sample;
+                dom.timeoutSeconds.value = config.defaultExecutionTimeoutSeconds;
                 updateLineNumbers(dom);
                 showOutput("inspect");
 
@@ -157,6 +172,7 @@
                     inspectButtonLabel: root.querySelector("#xqi-inspect-button-label"),
                     executeButton: root.querySelector("#xqi-execute-button"),
                     executeButtonLabel: root.querySelector("#xqi-execute-button-label"),
+                    timeoutSeconds: root.querySelector("#xqi-timeout-seconds"),
                     inspectTab: root.querySelector("#xqi-inspect-tab"),
                     executeTab: root.querySelector("#xqi-execute-tab"),
                     resultNode: root.querySelector("#xqi-result"),
@@ -247,9 +263,27 @@
                 return "";
             }
 
+            function parseExecutionTimeoutSeconds(value) {
+                var text = String(value).trim();
+                var parsed;
+                if (!/^\d+$/.test(text)) {
+                    return null;
+                }
+                parsed = Number(text);
+                if (parsed < 1 || parsed > config.maxExecutionTimeoutSeconds) {
+                    return null;
+                }
+                return parsed;
+            }
+
             // Transport
             function createTransport(fetchImplementation, endpoint) {
-                function request(action, xquery) {
+                function request(action, xquery, timeoutSeconds) {
+                    var body = "action=" + encodeURIComponent(action)
+                        + "&xquery=" + encodeURIComponent(xquery);
+                    if (action === "execute" && timeoutSeconds !== undefined) {
+                        body += "&timeout_seconds=" + encodeURIComponent(timeoutSeconds);
+                    }
                     return fetchImplementation(endpoint, {
                         method: "POST",
                         credentials: "same-origin",
@@ -258,8 +292,7 @@
                             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                             "X-Requested-With": "XMLHttpRequest"
                         },
-                        body: "action=" + encodeURIComponent(action)
-                            + "&xquery=" + encodeURIComponent(xquery)
+                        body: body
                     }).then(function (response) {
                         return response.text().then(function (responseText) {
                             if (!response.ok) {
@@ -300,7 +333,9 @@
                 return {
                     state: data.success ? "result" : "error",
                     statusText: execute
-                        ? (data.success ? "Выполнен успешно" : "Выполнен с ошибкой")
+                        ? (data.timedOut
+                            ? "Превышен тайм-аут"
+                            : (data.success ? "Выполнен успешно" : "Выполнен с ошибкой"))
                         : (data.success ? "SQL сформирован" : "Ошибка инспекции"),
                     statusClass: data.success ? "status-success" : "status-error",
                     data: data,
@@ -442,6 +477,7 @@
                     var oldSpinner = activeButton.querySelector(".spinner");
                     dom.inspectButton.disabled = loading;
                     dom.executeButton.disabled = loading;
+                    dom.timeoutSeconds.disabled = loading;
                     activeLabel.textContent = loading
                         ? (operation === "execute" ? "Выполнение…" : "Инспекция…")
                         : (operation === "execute" ? "Выполнить" : "Инспектировать");
@@ -620,6 +656,8 @@
                     items = items.concat([
                         ["Выполнение начато", data.executionAttempted],
                         ["Выполнение успешно", data.executionSuccess],
+                        ["Тайм-аут, сек.", data.timeoutSeconds],
+                        ["Превышен тайм-аут", data.timedOut],
                         ["Прочитано строк", data.rowsRead],
                         ["SQL после выполнения", data.executedSql ? "Получен" : "Не получен"],
                         ["Ошибка получения SQL", data.executedCommandCaptureError]

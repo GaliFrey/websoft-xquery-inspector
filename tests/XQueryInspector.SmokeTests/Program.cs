@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
+using System.Threading;
 using XQueryInspector;
 
 Inspector inspector = new();
@@ -21,6 +22,7 @@ RunScenario(
     "reflection-collection-query-command",
     () => VerifyDirectCollectionPath(inspector));
 RunScenario("query-execution", () => VerifyExecution(inspector));
+RunScenario("execution-timeout", () => VerifyExecutionTimeout(inspector));
 RunScenario("failure-stages", () => VerifyFailureStages(inspector));
 RunScenario("provider-parameter-types", () => VerifyProviderParameterTypes(inspector));
 RunScenario(
@@ -65,7 +67,7 @@ static void VerifySuccessfulInspection(
     Assert(root.GetProperty("contractVersion").GetInt32() == 1, "Unexpected contract version.");
     Assert(
         root.GetProperty("inspectorVersion").GetString()?.StartsWith(
-            "1.4.2",
+            "1.5.1",
             StringComparison.Ordinal) == true,
         "Unexpected inspector version.");
     Assert(
@@ -243,6 +245,37 @@ static void VerifyExecution(Inspector inspector)
         failed.GetProperty("executedSql").GetString() == "select id from collaborators order by id",
         "Runtime command was lost after execution failure.");
     Assert(failingCollection.Terminated, "Failed collection was not terminated.");
+}
+
+static void VerifyExecutionTimeout(Inspector inspector)
+{
+    TimeoutExecutableCollection collection = new();
+    JsonElement timedOut = ParseResult(inspector.ExecuteWithTimeout(
+        new ScenarioProvider(_ => collection),
+        "for $elem in collaborators return $elem/id",
+        1L));
+
+    Assert(!timedOut.GetProperty("success").GetBoolean(), "Timed-out execution succeeded.");
+    Assert(timedOut.GetProperty("timedOut").GetBoolean(), "Timeout was not reported.");
+    Assert(timedOut.GetProperty("timeoutSeconds").GetInt64() == 1L, "Timeout value changed.");
+    Assert(
+        timedOut.GetProperty("failureStage").GetString() == "execute-timeout",
+        "Timed-out execution has an unexpected failure stage.");
+    Assert(
+        timedOut.GetProperty("errorType").GetString() == typeof(TimeoutException).FullName,
+        "Timed-out execution has an unexpected error type.");
+    Assert(collection.Query.command!.CommandTimeout == 1, "Command timeout was not configured.");
+    Assert(collection.Query.command.CancelCalled, "Timed-out command was not cancelled.");
+    Assert(collection.Terminated, "Timed-out collection was not terminated.");
+
+    ScenarioProvider invalidProvider = new(_ => new ExecutableCollection(false));
+    JsonElement zero = ParseResult(inspector.ExecuteWithTimeout(
+        invalidProvider,
+        "for $elem in collaborators return $elem/id",
+        0L));
+    Assert(!zero.GetProperty("success").GetBoolean(), "Zero timeout was accepted.");
+    Assert(zero.GetProperty("failureStage").GetString() == "validate-input", "Invalid timeout stage changed.");
+    Assert(invalidProvider.CallCount == 0, "Invalid timeout reached the provider.");
 }
 
 static void VerifyFailureStages(Inspector inspector)
@@ -927,6 +960,18 @@ sealed class FakeCommand
     public string? CommandText { get; set; }
 
     public List<FakeParameter> Parameters { get; set; } = new();
+
+    public int CommandTimeout { get; set; }
+
+    public bool CancelCalled { get; private set; }
+
+    public Action? OnCancel { get; set; }
+
+    public void Cancel()
+    {
+        CancelCalled = true;
+        OnCancel?.Invoke();
+    }
 }
 
 sealed class FakeParameter
@@ -1198,6 +1243,46 @@ sealed class ExecutableCollection
     public void Terminate()
     {
         Terminated = true;
+    }
+}
+
+sealed class TimeoutExecutableCollection
+{
+    private readonly ManualResetEventSlim cancelled = new(false);
+
+    public TimeoutExecutableCollection()
+    {
+        Query = new FakeQuery
+        {
+            QueryType = "XQuery",
+            command = new FakeCommand
+            {
+                CommandText = "select blocked",
+                Parameters = new List<FakeParameter>(),
+                OnCancel = cancelled.Set
+            }
+        };
+    }
+
+    public FakeQuery Query { get; }
+
+    public bool Terminated { get; private set; }
+
+    public bool GetFirst()
+    {
+        cancelled.Wait();
+        throw new OperationCanceledException("Database command was cancelled.");
+    }
+
+    public bool GetNext()
+    {
+        return false;
+    }
+
+    public void Terminate()
+    {
+        Terminated = true;
+        cancelled.Dispose();
     }
 }
 
