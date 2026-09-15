@@ -219,6 +219,7 @@ else
         .xqi-root .execution-actions {
             display: flex;
             align-items: center;
+            justify-self: end;
             gap: 8px;
         }
 
@@ -292,7 +293,7 @@ else
 
         .xqi-root .editor-footer {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
+            grid-template-columns: 1fr;
             align-items: center;
             gap: 12px 16px;
             padding: 13px 16px;
@@ -340,21 +341,6 @@ else
         .xqi-root .guide-arrow {
             color: var(--line-strong);
             font-size: 18px;
-        }
-
-        .xqi-root .shortcut {
-            color: var(--muted);
-            font-size: 11px;
-        }
-
-        .xqi-root kbd {
-            padding: 2px 5px;
-            border: 1px solid var(--line-strong);
-            border-bottom-width: 2px;
-            border-radius: 5px;
-            background: var(--panel-soft);
-            color: var(--text);
-            font: 10px Consolas, monospace;
         }
 
         /* Result */
@@ -878,7 +864,6 @@ else
                             <span><strong>Выполнение</strong> запускает запрос и показывает SQL, наблюдаемый во время выполнения.</span>
                         </div>
                     </div>
-                    <div class="shortcut"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> — инспектировать</div>
                     <div class="execution-actions">
                         <button class="button button-action button-inspect" id="xqi-inspect-button" type="button">
                             <span id="xqi-inspect-button-label">Инспектировать</span>
@@ -1106,7 +1091,7 @@ else
                     dom.lineNumbers.scrollTop = dom.editor.scrollTop;
                 });
                 dom.editor.addEventListener("keydown", function (event) {
-                    handleEditorKeydown(event, dom, inspect);
+                    handleEditorKeydown(event, dom);
                 });
                 dom.inspectButton.addEventListener("click", inspect);
                 dom.executeButton.addEventListener("click", execute);
@@ -1137,13 +1122,7 @@ else
 
             }
 
-            function handleEditorKeydown(event, dom, inspect) {
-                if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-                    event.preventDefault();
-                    inspect();
-                    return;
-                }
-
+            function handleEditorKeydown(event, dom) {
                 if (event.key === "Tab") {
                     event.preventDefault();
                     var start = dom.editor.selectionStart;
@@ -2045,7 +2024,9 @@ else
             }
 
             function formatXQuery(source) {
-                return breakBeforeKeywords(source, ["order by", "for", "let", "where", "return"]);
+                return breakBeforeKeywords(source, [
+                    "order by", "group by", "for", "let", "where", "return"
+                ]);
             }
 
             function formatSql(source) {

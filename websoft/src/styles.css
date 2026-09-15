@@ -144,6 +144,7 @@
         .xqi-root .execution-actions {
             display: flex;
             align-items: center;
+            justify-self: end;
             gap: 8px;
         }
 
@@ -217,7 +218,7 @@
 
         .xqi-root .editor-footer {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
+            grid-template-columns: 1fr;
             align-items: center;
             gap: 12px 16px;
             padding: 13px 16px;
@@ -265,21 +266,6 @@
         .xqi-root .guide-arrow {
             color: var(--line-strong);
             font-size: 18px;
-        }
-
-        .xqi-root .shortcut {
-            color: var(--muted);
-            font-size: 11px;
-        }
-
-        .xqi-root kbd {
-            padding: 2px 5px;
-            border: 1px solid var(--line-strong);
-            border-bottom-width: 2px;
-            border-radius: 5px;
-            background: var(--panel-soft);
-            color: var(--text);
-            font: 10px Consolas, monospace;
         }
 
         /* Result */

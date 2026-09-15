@@ -88,6 +88,10 @@ node tools/verify.js
 2. Скопируйте в него `websoft/websoft-xquery-inspector.html` целиком.
 3. Сохраните шаблон в UTF-8 с BOM.
 4. Опубликуйте его через маршрут портала и ограничьте доступ администраторами.
+5. Открывайте инспектор напрямую по адресу
+   `/custom_web_template.html?object_code=websoft-xquery-inspector`. Страница документа
+   `/_wt/doc_type/custom_web_template.html` ограничивает ширину шаблона и не предназначена
+   для работы с его интерфейсом.
 
 Подробности сборки и устройства шаблона приведены в
 [документации WebSoft](websoft/README.md).

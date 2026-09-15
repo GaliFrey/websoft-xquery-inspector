@@ -179,7 +179,7 @@
                     dom.lineNumbers.scrollTop = dom.editor.scrollTop;
                 });
                 dom.editor.addEventListener("keydown", function (event) {
-                    handleEditorKeydown(event, dom, inspect);
+                    handleEditorKeydown(event, dom);
                 });
                 dom.inspectButton.addEventListener("click", inspect);
                 dom.executeButton.addEventListener("click", execute);
@@ -210,13 +210,7 @@
 
             }
 
-            function handleEditorKeydown(event, dom, inspect) {
-                if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-                    event.preventDefault();
-                    inspect();
-                    return;
-                }
-
+            function handleEditorKeydown(event, dom) {
                 if (event.key === "Tab") {
                     event.preventDefault();
                     var start = dom.editor.selectionStart;
@@ -1118,7 +1112,9 @@
             }
 
             function formatXQuery(source) {
-                return breakBeforeKeywords(source, ["order by", "for", "let", "where", "return"]);
+                return breakBeforeKeywords(source, [
+                    "order by", "group by", "for", "let", "where", "return"
+                ]);
             }
 
             function formatSql(source) {

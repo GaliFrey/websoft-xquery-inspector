@@ -107,11 +107,12 @@ assert(
 
 const formatXQuery = clientApi.formatXQuery;
 const formatSql = clientApi.formatSql;
-const simpleXQuery = "for $x in /items let $y := $x/name where $y order by $y return $y";
+const simpleXQuery = "for $x in /items let $y := $x/name where $y group by $y order by $y return $y";
 const formattedSimpleXQuery = [
     "for $x in /items",
     "let $y := $x/name",
     "where $y",
+    "group by $y",
     "order by $y",
     "return $y"
 ].join("\n");
@@ -328,7 +329,9 @@ async function verifyRendererAndInstanceIsolation() {
     );
 
     const preservedRoot = harness.createRoot("preserved");
+    let preservedRequestCount = 0;
     const preservedApp = clientApi.initialize(preservedRoot.root, function (url, options) {
+        preservedRequestCount += 1;
         if (options.body.indexOf("action=execute") >= 0) {
             return Promise.resolve(response(
                 true,
@@ -345,6 +348,17 @@ async function verifyRendererAndInstanceIsolation() {
         ));
     }, function () { return 40; });
     preservedRoot.nodes.editor.value = "preserved query";
+    let shortcutPrevented = false;
+    preservedRoot.nodes.editor.listeners.keydown({
+        ctrlKey: true,
+        key: "Enter",
+        preventDefault: function () { shortcutPrevented = true; }
+    });
+    await Promise.resolve();
+    assert(
+        preservedRequestCount === 0 && shortcutPrevented === false,
+        "Ctrl+Enter still starts inspection."
+    );
     await preservedApp.execute();
     assert(
         preservedRoot.nodes.result.textContent.includes("select executed"),
