@@ -251,9 +251,12 @@
                     cards.push({ kind: "legacy-warning" });
                 }
                 if (data.success) {
+                    if (data.sqlOffset === true) {
+                        cards.push({ kind: "sql-offset-warning" });
+                    }
                     cards.push({ kind: "sql" });
                     cards.push({ kind: "parameters" });
-                    cards.push({ kind: "effective-xquery", expanded: true });
+                    cards.push({ kind: "effective-xquery", expanded: false });
                     if (data.countSql) {
                         cards.push({ kind: "count-sql", expanded: false });
                     }
@@ -331,6 +334,14 @@
                         "div",
                         "message",
                         "Ответ DLL не содержит contractVersion. Данные показаны в режиме совместимости; обновите DLL для полной диагностики."
+                    );
+                }
+                if (card.kind === "sql-offset-warning") {
+                    return element(
+                        dom.document,
+                        "div",
+                        "message",
+                        sqlOffsetWarningText(data)
                     );
                 }
                 if (card.kind === "sql") {
@@ -578,7 +589,9 @@
                     ["Сборка внутренней коллекции", data.innerCollectionAssemblyVersion],
                     ["Runtime-тип Query", data.queryRuntimeType],
                     ["Сборка Query", data.queryAssemblyVersion],
-                    ["Значение QueryType", data.queryType]
+                    ["Значение QueryType", data.queryType],
+                    ["SqlOffset", data.sqlOffset],
+                    ["Размер страницы", data.pageSize]
                 ];
 
                 if (data.timingsMs) {
@@ -591,6 +604,15 @@
                     ]);
                 }
                 return items;
+            }
+
+            function sqlOffsetWarningText(data) {
+                var pageSize = typeof data.pageSize === "number" && data.pageSize > 0
+                    ? " Размер страницы — " + data.pageSize + " записей."
+                    : " Обычно размер страницы — 400 записей.";
+                return "Включён SqlOffset. При чтении коллекции UniBridge может "
+                    + "добавить пагинацию и сортировку, поэтому реально выполняемый "
+                    + "SQL может отличаться от показанного." + pageSize;
             }
 
             function diagnosticLines(data) {

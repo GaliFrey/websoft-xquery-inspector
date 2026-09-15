@@ -64,7 +64,7 @@ static void VerifySuccessfulInspection(
     Assert(root.GetProperty("contractVersion").GetInt32() == 1, "Unexpected contract version.");
     Assert(
         root.GetProperty("inspectorVersion").GetString()?.StartsWith(
-            "1.3.0",
+            "1.3.1",
             StringComparison.Ordinal) == true,
         "Unexpected inspector version.");
     Assert(
@@ -78,6 +78,8 @@ static void VerifySuccessfulInspection(
     Assert(
         root.GetProperty("countSql").GetString() == "select count(*) from collaborators",
         "Unexpected count SQL.");
+    Assert(root.GetProperty("sqlOffset").GetBoolean(), "SqlOffset was not read from metadata.");
+    Assert(root.GetProperty("pageSize").GetInt64() == 400L, "Page size was not read from Query.Options.");
     Assert(
         root.GetProperty("innerCollectionType").GetString()
             ?.Contains(nameof(FakeCollection), StringComparison.Ordinal) == true,
@@ -832,6 +834,8 @@ sealed class FakeComCollection
 
 class FakeCollectionBase
 {
+    protected readonly FakeMetadata metadata = new();
+
     public FakeQuery? Query;
 }
 
@@ -853,7 +857,24 @@ sealed class FakeQuery
 
     public string? QueryType { get; set; }
 
+    public FakeQueryOptions Options { get; set; } = new();
+
     public FakeCommand? command { get; set; }
+}
+
+sealed class FakeQueryOptions
+{
+    public long PageSize { get; set; } = 400L;
+}
+
+sealed class FakeMetadata
+{
+    public FakeInitialSettings InitialSesttings { get; } = new();
+}
+
+sealed class FakeInitialSettings
+{
+    public bool SqlOffset { get; set; } = true;
 }
 
 sealed class FakeCommand

@@ -2,7 +2,7 @@
 {
     var logName = "xquery_inspector_compatibility";
     var supportedContractVersion = 1;
-    var expectedInspectorVersion = "1.3.0";
+    var expectedInspectorVersion = "1.3.1";
     var knownReflectionPaths = ["collection.dc.Query.command"];
     var maxXQueryLength = 200000;
     var scenarios = [

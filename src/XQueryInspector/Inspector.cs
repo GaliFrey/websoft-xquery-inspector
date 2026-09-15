@@ -245,6 +245,20 @@ public sealed class Inspector
                     GetMemberValue(query, "QueryType"),
                     CultureInfo.InvariantCulture);
 
+                failureStage = "read-execution-settings";
+                object? metadata = GetMemberValue(queryOwner, "metadata");
+                object? initialSettings = metadata is null
+                    ? null
+                    : GetMemberValue(metadata, "InitialSesttings");
+                result.SqlOffset = GetMemberValue(initialSettings, "SqlOffset") as bool?;
+
+                object? queryOptions = GetMemberValue(query, "Options");
+                object? pageSize = GetMemberValue(queryOptions, "PageSize");
+                if (pageSize is not null)
+                {
+                    result.PageSize = Convert.ToInt64(pageSize, CultureInfo.InvariantCulture);
+                }
+
                 failureStage = "read-parameters";
                 object? commandParameters = GetMemberValue(command, "Parameters");
                 result.Parameters = ReadParameters(commandParameters);
@@ -426,8 +440,13 @@ public sealed class Inspector
                 "XQuery(string, long, long, bool, bool, bool)");
     }
 
-    private static object? GetMemberValue(object value, string name)
+    private static object? GetMemberValue(object? value, string name)
     {
+        if (value is null)
+        {
+            return null;
+        }
+
         for (Type? type = value.GetType(); type is not null; type = type.BaseType)
         {
             PropertyInfo? property = type.GetProperty(name, MemberFlags | BindingFlags.DeclaredOnly);
@@ -815,6 +834,10 @@ internal sealed class InspectionResult
     public string? Sql { get; set; }
 
     public string? CountSql { get; set; }
+
+    public bool? SqlOffset { get; set; }
+
+    public long? PageSize { get; set; }
 
     public List<ParameterResult> Parameters { get; set; } = new();
 

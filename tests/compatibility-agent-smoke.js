@@ -318,7 +318,7 @@ function createInspector(parameterType, calls) {
 function result(overrides) {
     return JSON.stringify(Object.assign({
         contractVersion: 1,
-        inspectorVersion: "1.3.0",
+        inspectorVersion: "1.3.1",
         providerType: "Synthetic.Provider, Synthetic",
         providerAssemblyVersion: "1.25.3.4",
         collectionAssemblyVersion: "1.25.3.4",

@@ -43,6 +43,7 @@ const getContractState = clientApi.getContractState;
 const effectiveXQuery = clientApi.effectiveXQuery;
 const resultCards = clientApi.resultCards;
 const resultViewModel = clientApi.resultViewModel;
+const sqlOffsetWarningText = clientApi.sqlOffsetWarningText;
 
 assert(getContractState({ contractVersion: 1 }) === "supported", "Contract 1 was rejected.");
 assert(getContractState({ success: true }) === "legacy", "Legacy response was rejected.");
@@ -66,6 +67,17 @@ assert(
 );
 
 verifyResultCards(resultCards);
+assert(
+    sqlOffsetWarningText({ pageSize: 400 }).includes("400 записей")
+        && sqlOffsetWarningText({ pageSize: 400 }).includes("сортировку")
+        && sqlOffsetWarningText({ pageSize: 400 }).includes("пагинацию"),
+    "SqlOffset warning does not explain runtime SQL changes and page size."
+);
+assert(
+    sqlOffsetWarningText({ pageSize: null }).includes("Обычно")
+        && sqlOffsetWarningText({ pageSize: null }).includes("400 записей"),
+    "SqlOffset warning does not provide the usual page size fallback."
+);
 verifyTemplateFileProperties();
 
 const xQueryCharacterCount = clientApi.xQueryCharacterCount;
@@ -446,9 +458,11 @@ function verifyResultCards(getCards) {
         contractVersion: 1,
         success: true,
         countSql: "select count(*)",
+        sqlOffset: true,
         cleanupError: null
     });
     assertCardKinds(supportedSuccess, [
+        "sql-offset-warning",
         "sql",
         "parameters",
         "effective-xquery",
@@ -457,10 +471,10 @@ function verifyResultCards(getCards) {
         "raw"
     ], "Successful result card order is incorrect.");
     assert(
-        supportedSuccess[2].expanded === true
-            && supportedSuccess[3].expanded === false
+        supportedSuccess[3].expanded === false
             && supportedSuccess[4].expanded === false
-            && supportedSuccess[5].expanded === false,
+            && supportedSuccess[5].expanded === false
+            && supportedSuccess[6].expanded === false,
         "Successful result card expansion state is incorrect."
     );
 
@@ -609,6 +623,7 @@ function createClientApi(options) {
     const exported = [
         "config", "initialize", "getDom", "createTransport", "createRenderer",
         "resultViewModel", "getContractState", "effectiveXQuery", "resultCards",
+        "sqlOffsetWarningText",
         "xQueryCharacterCount", "xQueryValidationMessage", "parametersTsv",
         "diagnosticLines", "millisecondsText", "errorCard", "copyText",
         "formatXQuery", "formatSql"
